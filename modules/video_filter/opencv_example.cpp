@@ -137,9 +137,7 @@ static void CloseFilter( vlc_object_t *p_this )
     filter_sys_t *p_sys = p_filter->p_sys;
 
     if( p_sys->p_cascade )
-        //cvReleaseHaarClassifierCascade( &p_sys->p_cascade );
-    {}
-
+        free( p_sys->p_cascade);
 
     if( p_sys->p_storage )
         cvReleaseMemStorage( &p_sys->p_storage );
