@@ -52,7 +52,8 @@
 struct filter_sys_t
 {
     CvMemStorage* p_storage;
-    CvHaarClassifierCascade* p_cascade;
+    //CvHaarClassifierCascade* p_cascade;
+    cv::CascadeClassifier* p_cascade;
     video_filter_event_info_t event_info;
     int i_id;
 };
@@ -116,7 +117,11 @@ static int OpenFilter( vlc_object_t *p_this )
 
     //OpenCV init specific to this example
     char* filename = var_InheritString( p_filter, "opencv-haarcascade-file" );
-    p_sys->p_cascade = (CvHaarClassifierCascade*)cvLoad( filename, 0, 0, 0 );
+    //change
+        p_sys->p_cascade = new cv::CascadeClassifier();
+        p_sys->p_cascade->load(filename);
+    //end
+    //p_sys->p_cascade = (CvHaarClassifierCascade*)cvLoad( filename, 0, 0, 0 );
     p_sys->p_storage = cvCreateMemStorage(0);
     free( filename );
 
@@ -132,7 +137,9 @@ static void CloseFilter( vlc_object_t *p_this )
     filter_sys_t *p_sys = p_filter->p_sys;
 
     if( p_sys->p_cascade )
-        cvReleaseHaarClassifierCascade( &p_sys->p_cascade );
+        //cvReleaseHaarClassifierCascade( &p_sys->p_cascade );
+    {}
+
 
     if( p_sys->p_storage )
         cvReleaseMemStorage( &p_sys->p_storage );
@@ -173,11 +180,21 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
     if( p_sys->p_cascade )
     {
         //we should make some of these params config variables
-        CvSeq *faces = cvHaarDetectObjects( p_img[0], p_sys->p_cascade,
-                                            p_sys->p_storage, 1.15, 5,
-                                            CV_HAAR_DO_CANNY_PRUNING,
-                                            cvSize(20, 20) );
+        //CvSeq *faces = cvHaarDetectObjects( p_img[0], p_sys->p_cascade,
+        //                                    p_sys->p_storage, 1.15, 5,
+        //                                    CV_HAAR_DO_CANNY_PRUNING,
+        //                                    cvSize(20, 20) );
+
+        cv::Mat img(p_img[0]->height,p_img[0]->width,CV_8UC3,p_img[0]);
+        cv::Mat gray(cvRound(img.rows), cvRound(img.cols),CV_8UC1);
+        std::vector<cv::Rect> faces;
+        p_sys->p_cascade->detectMultiScale(gray,faces,
+                                                     1.15, 5,
+                                                    CV_HAAR_DO_CANNY_PRUNING,
+                                                    cv::Size(20, 20));
+
         //create the video_filter_region_info_t struct
+        /*
         if (faces && (faces->total > 0))
         {
             //msg_Dbg( p_filter, "Found %d face(s)", faces->total );
@@ -187,9 +204,19 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
             if( !p_sys->event_info.p_region )
                 return NULL;
             p_sys->event_info.i_region_size = faces->total;
+        }*/
+        if(!faces.empty())
+        {
+            free( p_sys->event_info.p_region );
+            p_sys->event_info.p_region = (video_filter_region_info_t*)
+                    calloc( faces.size(), sizeof(video_filter_region_info_t));
+            if( !p_sys->event_info.p_region )
+                return NULL;
+            p_sys->event_info.i_region_size = faces.size();
         }
 
         //populate the video_filter_region_info_t struct
+        /*
         for( int i = 0; i < (faces ? faces->total : 0); i++ )
         {
             CvRect *r = (CvRect*)cvGetSeqElem( faces, i );
@@ -202,9 +229,31 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
             *(CvRect*)(&(p_sys->event_info.p_region[i])) = *r;
             p_sys->event_info.p_region[i].i_id = p_sys->i_id++;
             p_sys->event_info.p_region[i].p_description = "Face Detected";
+        }*/
+        int i = 0;
+        for(auto face:faces)
+        {
+            cv::Rect r = face;
+            pt1.x = r.x*scale;
+            pt2.x = (r.x+r.width)*scale;
+            pt1.y = r.y*scale;
+            pt2.y = (r.y+r.height)*scale;
+            cvRectangle( p_img[0], pt1, pt2, CV_RGB(0,0,0), 3, 8, 0 );
+
+            p_sys->event_info.p_region[i].i_height = face.height;
+            p_sys->event_info.p_region[i].i_width = face.width;
+            p_sys->event_info.p_region[i].i_x = face.x;
+             p_sys->event_info.p_region[i].i_y = face.y;
+            p_sys->event_info.p_region[i].i_id = p_sys->i_id++;
+            p_sys->event_info.p_region[i].p_description = "Face Detected";
+            i++;
         }
 
+        /*
         if (faces && (faces->total > 0))    //raise the video filter event
+            var_TriggerCallback( p_filter->obj.libvlc, VIDEO_FILTER_EVENT_VARIABLE );
+            */
+        if (!faces.empty())    //raise the video filter event
             var_TriggerCallback( p_filter->obj.libvlc, VIDEO_FILTER_EVENT_VARIABLE );
     }
     else
