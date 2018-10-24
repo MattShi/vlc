@@ -1,3 +1,10 @@
+
+FOR QT WITH UBUNTU 18.04
+1) ./bootstrap
+2) ./configure --enable-vdpau=false
+3) load prj ,select vlc folder and build
+==============================
+
 README for the VLC media player
 ===============================
 
