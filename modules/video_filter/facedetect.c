@@ -36,22 +36,32 @@
 #include <vlc_picture.h>
 #include "filter_picture.h"
 
+//for plugin
+#include <dlfcn.h>
+
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
 static int  Create    ( vlc_object_t * );
 static void Destroy   ( vlc_object_t * );
 
-#define FILTER_PREFIX "motiondetect-"
+/*****************************************************************************
+ * face detect plugin interface
+ * ***************************************************************************/
+typedef void* (*pf_init)(const char* cparam);
+typedef void (*pf_detect)(char* pData, int nw, int nh, bool bDraw);
+typedef void (*pf_uninit)(void);
+
+#define FILTER_PREFIX "facedetect-"
 
 vlc_module_begin ()
-    set_description( N_("Motion detect video filter") )
-    set_shortname( N_( "Motion Detect" ))
+    set_description( N_("Face detect video filter") )
+    set_shortname( N_( "Face Detect" ))
     set_category( CAT_VIDEO )
     set_subcategory( SUBCAT_VIDEO_VFILTER )
     set_capability( "video filter", 0 )
 
-    add_shortcut( "motion" )
+    add_shortcut( "face" )
     set_callbacks( Create, Destroy )
 vlc_module_end ()
 
@@ -81,6 +91,12 @@ struct filter_sys_t
     int color_x_max[NUM_COLORS];
     int color_y_min[NUM_COLORS];
     int color_y_max[NUM_COLORS];
+
+    /*detect plugin*/
+    void *pHandle;
+    pf_init p_Init;
+    pf_detect p_Detect;
+    pf_uninit p_Unit;
 };
 
 /*****************************************************************************
@@ -129,6 +145,16 @@ static int Create( vlc_object_t *p_this )
             picture_Release( p_sys->p_old );
         return VLC_ENOMEM;
     }
+
+    //load lib
+    p_sys->pHandle = dlopen("libface_detect.so", RTLD_NOW);
+    if(NULL == p_sys->pHandle )
+    {
+        return VLC_ENOMEM;
+    }
+    p_sys->p_Init = (pf_init)(dlsym(p_sys->pHandle,"init"));
+    p_sys->p_Detect = (pf_detect)(dlsym(p_sys->pHandle,"detect"));
+    p_sys->p_Unit = (pf_uninit)(dlsym(p_sys->pHandle,"unInit"));
 
     return VLC_SUCCESS;
 }
@@ -272,6 +298,15 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_inpic )
     }
     picture_Copy( p_outpic, p_inpic );
 
+    //DETECT
+    if(NULL != p_sys->p_Detect)
+    {
+        const video_format_t *p_fmt = &p_filter->fmt_in.video;
+
+        p_sys->p_Detect(p_inpic->p[Y_PLANE].p_pixels,p_fmt->i_width,p_fmt->i_height,true);
+    }
+
+    /*
     if( !p_sys->b_old )
     {
         picture_Copy( p_sys->p_old, p_inpic );
@@ -293,19 +328,22 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_inpic )
             goto exit;
         i_pix_size = 2;
     }
+    */
 
     /**
      * Get the areas where movement was detected
      */
+    /*
     const video_format_t *p_fmt = &p_filter->fmt_in.video;
     p_sys->i_colors = FindShapes( p_sys->p_buf2, p_sys->p_buf, p_fmt->i_width, p_fmt->i_width, p_fmt->i_height,
                                   p_sys->colors, p_sys->color_x_min, p_sys->color_x_max, p_sys->color_y_min, p_sys->color_y_max );
+    */
 
     /**
      * Count final number of shapes
      * Draw rectangles (there can be more than 1 moving shape in 1 rectangle)
      */
-    Draw( p_filter, &p_outpic->p[Y_PLANE].p_pixels[i_pix_offset], p_outpic->p[Y_PLANE].i_pitch, i_pix_size );
+    //Draw( p_filter, &p_outpic->p[Y_PLANE].p_pixels[i_pix_offset], p_outpic->p[Y_PLANE].i_pitch, i_pix_size );
 
     /**
      * We're done. Lets keep a copy of the picture
