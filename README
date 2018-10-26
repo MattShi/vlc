@@ -1,7 +1,7 @@
 
 FOR QT WITH UBUNTU 18.04
 1) ./bootstrap
-2) ./configure --disable-vdpau --disable-optimizations --enable-debug
+2) ./configure --disable-vdpau --disable-optimizations --enable-debug --disable-chromecast
 3) load prj ,select vlc folder and build
 4) run as ./vlc-static --video-filter=opencv_wrapper rtsp://admin:admin12345@10.1.50.102:554/Streaming/Channels/101?transportmode=unicast&profile=Profile_1
 ==============================
