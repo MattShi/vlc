@@ -3967,6 +3967,16 @@ PKG_ENABLE_MODULES_VLC([LIBXML2], [xml], [libxml-2.0 >= 2.5], [libxml2 support],
 
 
 dnl
+dnl  Face detect  module
+dnl
+AC_ARG_ENABLE(facedetect,
+  [  --enable-facedetect           facedetect support (default disabled)])
+AS_IF([test "${enable_facedetect}" != "no"], [
+VLC_ADD_PLUGIN([facedetect]) 
+])
+
+
+dnl
 dnl libgcrypt
 dnl
 AC_ARG_ENABLE(libgcrypt,

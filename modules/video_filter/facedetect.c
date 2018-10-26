@@ -48,8 +48,8 @@ static void Destroy   ( vlc_object_t * );
 /*****************************************************************************
  * face detect plugin interface
  * ***************************************************************************/
-typedef void* (*pf_init)(const char* cparam);
-typedef void (*pf_detect)(char* pData, int nw, int nh, bool bDraw);
+typedef void (*pf_init)(const char* cparam);
+typedef int (*pf_detect)(unsigned char* pData, int nw, int nh, bool bDraw);
 typedef void (*pf_uninit)(void);
 
 #define FILTER_PREFIX "facedetect-"
@@ -61,7 +61,7 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_VIDEO_VFILTER )
     set_capability( "video filter", 0 )
 
-    add_shortcut( "face" )
+    add_shortcut( "facedetect" )
     set_callbacks( Create, Destroy )
 vlc_module_end ()
 
@@ -147,14 +147,27 @@ static int Create( vlc_object_t *p_this )
     }
 
     //load lib
-    p_sys->pHandle = dlopen("libface_detect.so", RTLD_NOW);
+    p_sys->pHandle = dlopen("/home/matt/work/VLC/modules/.libs/libface_detect.so", RTLD_NOW);
     if(NULL == p_sys->pHandle )
     {
-        return VLC_ENOMEM;
+        msg_Err( p_filter, "load detect plugin failed %s",dlerror());
+        return VLC_ENOOBJ;
     }
     p_sys->p_Init = (pf_init)(dlsym(p_sys->pHandle,"init"));
     p_sys->p_Detect = (pf_detect)(dlsym(p_sys->pHandle,"detect"));
     p_sys->p_Unit = (pf_uninit)(dlsym(p_sys->pHandle,"unInit"));
+
+    if(NULL == p_sys->p_Init
+            || NULL == p_sys->p_Detect
+            || NULL == p_sys->p_Unit)
+    {
+        msg_Err( p_filter, "load detect plugin failed,some interfaces are empty");
+        dlclose(p_sys->pHandle);
+        p_sys->pHandle = NULL;
+        return VLC_ENOOBJ;
+    }
+
+    p_sys->p_Init("mmod_human_face_detector.dat");
 
     return VLC_SUCCESS;
 }
@@ -170,6 +183,17 @@ static void Destroy( vlc_object_t *p_this )
     free( p_sys->p_buf2 );
     free( p_sys->p_buf );
     picture_Release( p_sys->p_old );
+
+    //
+    if(NULL != p_sys->p_Unit)
+    {
+        p_sys->p_Unit();
+    }
+    if(NULL != p_sys->pHandle)
+    {
+        dlclose(p_sys->pHandle);
+        p_sys->pHandle = NULL;
+    }
     free( p_sys );
 }
 
