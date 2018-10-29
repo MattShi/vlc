@@ -114,28 +114,14 @@ DialogsProvider::~DialogsProvider()
     delete miscPopupMenu;
 }
 
-QStringList DialogsProvider::getOpenURL( QWidget *parent,
-                                         const QString &caption,
-                                         const QString &dir,
-                                         const QString &filter,
-                                         QString *selectedFilter )
-{
-    QStringList res;
-    QList<QUrl> urls = QFileDialog::getOpenFileUrls( parent, caption, QUrl::fromUserInput( dir ), filter, selectedFilter );
-
-    foreach( const QUrl& url, urls )
-        res.append( url.toEncoded() );
-
-    return res;
-}
-
 QString DialogsProvider::getSaveFileName( QWidget *parent,
                                           const QString &caption,
-                                          const QString &dir,
+                                          const QUrl &dir,
                                           const QString &filter,
                                           QString *selectedFilter )
 {
-    return QFileDialog::getSaveFileName( parent, caption, dir, filter, selectedFilter );
+    const QStringList schemes = QStringList(QStringLiteral("file"));
+    return QFileDialog::getSaveFileUrl( parent, caption, dir, filter, selectedFilter, QFileDialog::Options(), schemes).toLocalFile();
 }
 
 void DialogsProvider::quit()
@@ -310,12 +296,20 @@ void DialogsProvider::aboutDialog()
 
 void DialogsProvider::mediaInfoDialog()
 {
-    MediaInfoDialog::getInstance( p_intf )->showTab( MediaInfoDialog::META_PANEL );
+    MediaInfoDialog *dialog = MediaInfoDialog::getInstance( p_intf );
+    if( !dialog->isVisible() || dialog->currentTab() != MediaInfoDialog::META_PANEL )
+        dialog->showTab( MediaInfoDialog::META_PANEL );
+    else
+        dialog->hide();
 }
 
 void DialogsProvider::mediaCodecDialog()
 {
-    MediaInfoDialog::getInstance( p_intf )->showTab( MediaInfoDialog::INFO_PANEL );
+    MediaInfoDialog *dialog = MediaInfoDialog::getInstance( p_intf );
+    if( !dialog->isVisible() || dialog->currentTab() != MediaInfoDialog::INFO_PANEL )
+        dialog->showTab( MediaInfoDialog::INFO_PANEL );
+    else
+        dialog->hide();
 }
 
 void DialogsProvider::bookmarksDialog()
@@ -396,17 +390,15 @@ void DialogsProvider::openFileGenericDialog( intf_dialog_args_t *p_arg )
     }
     else /* non-save mode */
     {
-        QStringList urls = getOpenURL( NULL, qfu( p_arg->psz_title ),
+        QList<QUrl> urls = QFileDialog::getOpenFileUrls( NULL, qfu( p_arg->psz_title ),
                                        p_intf->p_sys->filepath, extensions );
         p_arg->i_results = urls.count();
         p_arg->psz_results = (char **)vlc_alloc( p_arg->i_results, sizeof( char * ) );
         i = 0;
-        foreach( const QString &uri, urls )
-            p_arg->psz_results[i++] = strdup( qtu( uri ) );
-        if(i == 0)
-            p_intf->p_sys->filepath = QString::fromLatin1("");
-        else
-            p_intf->p_sys->filepath = qfu( p_arg->psz_results[i-1] );
+        foreach( const QUrl &uri, urls )
+            p_arg->psz_results[i++] = strdup( uri.toEncoded().constData() );
+        if( !urls.isEmpty() )
+            p_intf->p_sys->filepath =  urls.last();
     }
 
     /* Callback */
@@ -461,19 +453,12 @@ void DialogsProvider::PLAppendDialog( int tab )
                              OPEN_AND_ENQUEUE )->showTab( tab );
 }
 
-void DialogsProvider::MLAppendDialog( int tab )
-{
-    OpenDialog::getInstance( p_intf->p_sys->p_mi, p_intf, false,
-                            OPEN_AND_ENQUEUE, false, false )
-                                    ->showTab( tab );
-}
-
 /**
  * Simple open
  ***/
 QStringList DialogsProvider::showSimpleOpen( const QString& help,
                                              int filters,
-                                             const QString& path )
+                                             const QUrl& path )
 {
     QString fileTypes = "";
     if( filters & EXT_FILTER_MEDIA ) {
@@ -495,37 +480,32 @@ QStringList DialogsProvider::showSimpleOpen( const QString& help,
     fileTypes.replace( ";*", " *");
     fileTypes.chop(2); //remove trailling ";;"
 
-    QStringList urls = getOpenURL( NULL,
+    QList<QUrl> urls = QFileDialog::getOpenFileUrls( NULL,
         help.isEmpty() ? qtr(I_OP_SEL_FILES ) : help,
         path.isEmpty() ? p_intf->p_sys->filepath : path,
         fileTypes );
 
-    if( !urls.isEmpty() ) savedirpathFromFile( urls.last() );
+    if( !urls.isEmpty() )
+        p_intf->p_sys->filepath = urls.last();
 
-    return urls;
-}
+    QStringList res;
+    foreach( const QUrl &url, urls )
+        res << url.toEncoded();
 
-/**
- * Open a file,
- * pl helps you to choose from playlist or media library,
- * go to start or enqueue
- **/
-void DialogsProvider::addFromSimple( bool pl, bool go)
-{
-    QStringList urls = DialogsProvider::showSimpleOpen();
-
-    bool first = go;
-    urls.sort();
-    foreach( const QString &url, urls )
-    {
-        Open::openMRL( p_intf, url, first, pl);
-        first = false;
-    }
+    return res;
 }
 
 void DialogsProvider::simpleOpenDialog()
 {
-    addFromSimple( true, true ); /* Playlist and Go */
+    QStringList urls = DialogsProvider::showSimpleOpen();
+
+    bool first = true;
+    urls.sort();
+    foreach( const QString &url, urls )
+    {
+        Open::openMRL( p_intf, url, first );
+        first = false;
+    }
 }
 
 /* Url & Clipboard */
@@ -561,22 +541,25 @@ void DialogsProvider::openUrlDialog()
  * pl helps you to choose from playlist or media library,
  * go to start or enqueue
  **/
-static void openDirectory( intf_thread_t *p_intf, bool pl, bool go )
+static void openDirectory( intf_thread_t *p_intf, bool go )
 {
     QString uri = DialogsProvider::getDirectoryDialog( p_intf );
     if( !uri.isEmpty() )
-        Open::openMRL( p_intf, uri, go, pl );
+        Open::openMRL( p_intf, uri, go );
 }
 
 QString DialogsProvider::getDirectoryDialog( intf_thread_t *p_intf )
 {
-    QString dir = QFileDialog::getExistingDirectory( NULL,
-            qtr( I_OP_DIR_WINTITLE ), p_intf->p_sys->filepath );
+    const QStringList schemes = QStringList(QStringLiteral("file"));
+    QUrl dirurl = QFileDialog::getExistingDirectoryUrl( NULL,
+            qtr( I_OP_DIR_WINTITLE ), p_intf->p_sys->filepath,
+            QFileDialog::ShowDirsOnly, schemes );
 
-    if( dir.isEmpty() ) return QString();
+    if( dirurl.isEmpty() ) return QString();
 
-    p_intf->p_sys->filepath = dir;
+    p_intf->p_sys->filepath = dirurl;
 
+    QString dir = dirurl.toLocalFile();
     const char *scheme = "directory";
     if( dir.endsWith( DIR_SEP "VIDEO_TS", Qt::CaseInsensitive ) )
         scheme = "dvd";
@@ -600,12 +583,12 @@ QString DialogsProvider::getDirectoryDialog( intf_thread_t *p_intf )
 
 void DialogsProvider::PLOpenDir()
 {
-    openDirectory( p_intf, true, true );
+    openDirectory( p_intf, true );
 }
 
 void DialogsProvider::PLAppendDir()
 {
-    openDirectory( p_intf, true, false );
+    openDirectory( p_intf, false );
 }
 
 /****************
@@ -695,7 +678,7 @@ void DialogsProvider::savePlayingToPlaylist()
     if ( psz_selected_module )
     {
         playlist_Export( THEPL, qtu( toNativeSeparators( file ) ),
-                         true, psz_selected_module );
+                         psz_selected_module );
         getSettings()->setValue( "last-playlist-ext", psz_last_playlist_ext );
     }
 }
@@ -765,7 +748,7 @@ void DialogsProvider::streamingDialog( QWidget *parent,
             QString title = "Converting " + mrls[i];
 
             /* Add each file to convert to our playlist, making sure to not attempt to start playing it.*/
-            Open::openMRLwithOptions( p_intf, mrls[i], &optionsCopy, false, true, qtu( title ) );
+            Open::openMRLwithOptions( p_intf, mrls[i], &optionsCopy, false, qtu( title ) );
         }
 
         /* Start the playlist from the beginning */
@@ -794,22 +777,20 @@ void DialogsProvider::loadSubtitlesFile()
     if( !p_item ) return;
 
     char *path = input_item_GetURI( p_item );
-    char *path2 = NULL;
+    QUrl url;
     if( path )
     {
-        path2 = vlc_uri2path( path );
-        free( path );
-        if( path2 )
-        {
-            char *sep = strrchr( path2, DIR_SEP_CHAR );
-            if( sep ) *sep = '\0';
-        }
+        url.setUrl( qfu(path) );
+        url = url.adjusted(QUrl::RemoveFilename);
+        if (url.scheme() != "file")
+            url.clear();
+        free(path);
     }
 
     QStringList qsl = showSimpleOpen( qtr( "Open subtitles..." ),
                                       EXT_FILTER_SUBTITLE,
-                                      qfu( path2 ) );
-    free( path2 );
+                                      url );
+
     foreach( const QString &qsUrl, qsl )
     {
         if( input_AddSlave( p_input, SLAVE_TYPE_SPU, qtu( qsUrl ), true, true, false ) )

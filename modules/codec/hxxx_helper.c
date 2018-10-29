@@ -41,11 +41,6 @@ hxxx_helper_init(struct hxxx_helper *hh, vlc_object_t *p_obj,
     memset(hh, 0, sizeof(struct hxxx_helper));
     hh->p_obj = p_obj;
     hh->i_codec = i_codec;
-    switch (i_codec)
-    {
-        case VLC_CODEC_H264:
-            break;
-    }
     hh->b_need_xvcC = b_need_xvcC;
 }
 
@@ -929,6 +924,37 @@ hxxx_helper_get_current_profile_level(const struct hxxx_helper *hh,
     }
     return VLC_EGENERIC;
 }
+
+int
+hxxx_helper_get_chroma_chroma(const struct hxxx_helper *hh, uint8_t *pi_chroma_format,
+                              uint8_t *pi_depth_luma, uint8_t *pi_depth_chroma)
+{
+    switch (hh->i_codec)
+    {
+        case VLC_CODEC_H264:
+        {
+            const struct hxxx_helper_nal *hsps = h264_helper_get_current_sps(hh);
+            if (hsps == NULL)
+                return VLC_EGENERIC;
+            return h264_get_chroma_luma(hsps->h264_sps, pi_chroma_format, pi_depth_luma,
+                                        pi_depth_chroma)
+                == true ? VLC_SUCCESS : VLC_EGENERIC;
+        }
+        case VLC_CODEC_HEVC:
+        {
+            const struct hxxx_helper_nal *hsps = &hh->hevc.sps_list[hh->hevc.i_current_sps];
+            if (hsps == NULL || hsps->hevc_sps == NULL)
+                return VLC_EGENERIC;
+
+            return hevc_get_chroma_luma(hsps->hevc_sps, pi_chroma_format, pi_depth_luma,
+                                        pi_depth_chroma)
+                == true ? VLC_SUCCESS : VLC_EGENERIC;
+        }
+        default:
+            vlc_assert_unreachable();
+    }
+}
+
 
 int
 hxxx_helper_get_colorimetry(const struct hxxx_helper *hh,

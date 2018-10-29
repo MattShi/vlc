@@ -43,14 +43,14 @@
 
 struct filter_level
 {
-    atomic_int   level;
+    atomic_long  level;
     float  default_val;
     float  min;
     float  max;
     DXVA2_ValueRange Range;
 };
 
-struct filter_sys_t
+typedef struct
 {
     HINSTANCE                      hdecoder_dll;
     /* keep a reference in case the vout is released first */
@@ -63,7 +63,7 @@ struct filter_sys_t
     struct filter_level Contrast;
     struct filter_level Hue;
     struct filter_level Saturation;
-};
+} filter_sys_t;
 
 #define THRES_TEXT N_("Brightness threshold")
 #define THRES_LONGTEXT N_("When this mode is enabled, pixels will be " \
@@ -107,7 +107,11 @@ static picture_t *Filter(filter_t *p_filter, picture_t *p_pic)
     picture_sys_t *p_src_sys = ActivePictureSys(p_pic);
 
     picture_t *p_outpic = filter_NewPicture( p_filter );
-    if( !p_outpic || !p_outpic->p_sys || !p_outpic->p_sys->surface )
+    if( !p_outpic )
+        goto failed;
+
+    picture_sys_t *p_out_sys = p_outpic->p_sys;
+    if( !p_out_sys || !p_out_sys->surface )
         goto failed;
 
     picture_CopyProperties( p_outpic, p_pic );
@@ -131,10 +135,10 @@ static picture_t *Filter(filter_t *p_filter, picture_t *p_pic)
     DXVA2_VideoSample sample = {0};
     FillSample( &sample, p_pic, &area );
 
-    params.ProcAmpValues.Brightness.Value = atomic_load( &p_sys->Brightness.level );
-    params.ProcAmpValues.Contrast.Value   = atomic_load( &p_sys->Contrast.level );
-    params.ProcAmpValues.Hue.Value        = atomic_load( &p_sys->Hue.level );
-    params.ProcAmpValues.Saturation.Value = atomic_load( &p_sys->Saturation.level );
+    params.ProcAmpValues.Brightness.ll = atomic_load( &p_sys->Brightness.level );
+    params.ProcAmpValues.Contrast.ll   = atomic_load( &p_sys->Contrast.level );
+    params.ProcAmpValues.Hue.ll        = atomic_load( &p_sys->Hue.level );
+    params.ProcAmpValues.Saturation.ll = atomic_load( &p_sys->Saturation.level );
     params.TargetFrame = 0;
     params.TargetRect  = area;
     params.DestData    = 0;
@@ -149,7 +153,7 @@ static picture_t *Filter(filter_t *p_filter, picture_t *p_pic)
                                                  1, NULL );
     hr = IDirect3DDevice9_StretchRect( p_sys->d3d_dev.dev,
                                        p_sys->hw_surface, NULL,
-                                       p_outpic->p_sys->surface, NULL,
+                                       p_out_sys->surface, NULL,
                                        D3DTEXF_NONE);
     if (FAILED(hr))
         goto failed;
@@ -161,25 +165,32 @@ failed:
     return NULL;
 }
 
-static void SetLevel(struct filter_level *range, float val)
+static LONG StoreLevel(const struct filter_level *range, const DXVA2_ValueRange *Range, float val)
 {
-    int level;
+    LONG level;
     if (val > range->default_val)
-        level = (range->Range.MaxValue.Value - range->Range.DefaultValue.Value) * (val - range->default_val) /
+    {
+        level = (Range->MaxValue.ll - Range->DefaultValue.ll) * (val - range->default_val) /
                 (range->max - range->default_val);
+    }
     else if (val < range->default_val)
-        level = (range->Range.MinValue.Value - range->Range.DefaultValue.Value) * (val - range->default_val) /
+    {
+        level = (Range->MinValue.ll - Range->DefaultValue.ll) * (val - range->default_val) /
                 (range->min - range->default_val);
+    }
     else
         level = 0;
 
-    atomic_store( &range->level, range->Range.DefaultValue.Value + level );
+    return level + Range->DefaultValue.ll;
+}
+
+static void SetLevel(struct filter_level *range, float val)
+{
+    atomic_store( &range->level, StoreLevel( range, &range->Range, val ) );
 }
 
 static void InitLevel(filter_t *filter, struct filter_level *range, const char *p_name, float def)
 {
-    int level;
-
     module_config_t *cfg = config_FindConfig(p_name);
     range->min = cfg->min.f;
     range->max = cfg->max.f;
@@ -187,16 +198,7 @@ static void InitLevel(filter_t *filter, struct filter_level *range, const char *
 
     float val = var_CreateGetFloatCommand( filter, p_name );
 
-    if (val > range->default_val)
-        level = (range->Range.MaxValue.Value - range->Range.DefaultValue.Value) * (val - range->default_val) /
-                (range->max - range->default_val);
-    else if (val < range->default_val)
-        level = (range->Range.MinValue.Value - range->Range.DefaultValue.Value) * (val - range->default_val) /
-                (range->min - range->default_val);
-    else
-        level = 0;
-
-    atomic_init( &range->level, range->Range.DefaultValue.Value + level );
+    atomic_init( &range->level, StoreLevel( range, &range->Range, val ) );
 }
 
 static int AdjustCallback( vlc_object_t *p_this, char const *psz_var,
@@ -261,12 +263,18 @@ static int D3D9OpenAdjust(vlc_object_t *obj)
     CreateVideoService =
       (void *)GetProcAddress(hdecoder_dll, "DXVA2CreateVideoService");
     if (CreateVideoService == NULL)
+    {
+        msg_Err(filter, "Can't create video service");
         goto error;
+    }
 
     hr = CreateVideoService( sys->d3d_dev.dev, &IID_IDirectXVideoProcessorService,
                             (void**)&processor);
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to create the video processor. (hr=0x%lX)", hr);
         goto error;
+    }
 
     DXVA2_VideoDesc dsc;
     ZeroMemory(&dsc, sizeof(dsc));
@@ -291,7 +299,10 @@ static int D3D9OpenAdjust(vlc_object_t *obj)
                                                                 &count,
                                                                 &processorGUIDs);
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to get processor GUIDs. (hr=0x%lX)", hr);
         goto error;
+    }
 
     const UINT neededCaps = DXVA2_ProcAmp_Brightness |
                             DXVA2_ProcAmp_Contrast |
@@ -325,25 +336,37 @@ static int D3D9OpenAdjust(vlc_object_t *obj)
                                                         dstDesc.Format, DXVA2_ProcAmp_Brightness,
                                                         &sys->Brightness.Range );
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to get the brightness range. (hr=0x%lX)", hr);
         goto error;
+    }
 
     hr = IDirectXVideoProcessorService_GetProcAmpRange( processor, processorGUID, &dsc,
                                                         dstDesc.Format, DXVA2_ProcAmp_Contrast,
                                                         &sys->Contrast.Range );
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to get the contrast range. (hr=0x%lX)", hr);
         goto error;
+    }
 
     hr = IDirectXVideoProcessorService_GetProcAmpRange( processor, processorGUID, &dsc,
                                                         dstDesc.Format, DXVA2_ProcAmp_Hue,
                                                         &sys->Hue.Range );
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to get the hue range. (hr=0x%lX)", hr);
         goto error;
+    }
 
     hr = IDirectXVideoProcessorService_GetProcAmpRange( processor, processorGUID, &dsc,
                                                         dstDesc.Format, DXVA2_ProcAmp_Saturation,
                                                         &sys->Saturation.Range );
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to get the saturation range. (hr=0x%lX)", hr);
         goto error;
+    }
 
     /* needed to get options passed in transcode using the
      * adjust{name=value} syntax */
@@ -369,7 +392,10 @@ static int D3D9OpenAdjust(vlc_object_t *obj)
                                                              1,
                                                              &sys->processor );
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to create the video processor. (hr=0x%lX)", hr);
         goto error;
+    }
 
     hr = IDirectXVideoProcessorService_CreateSurface( processor,
                                                       dstDesc.Width,
@@ -382,7 +408,10 @@ static int D3D9OpenAdjust(vlc_object_t *obj)
                                                       &sys->hw_surface,
                                                       NULL);
     if (FAILED(hr))
+    {
+        msg_Err(filter, "Failed to create the hardware surface. (hr=0x%lX)", hr);
         goto error;
+    }
 
     CoTaskMemFree(processorGUIDs);
     IDirectXVideoProcessorService_Release(processor);

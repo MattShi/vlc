@@ -40,53 +40,6 @@
  * Demultiplexer modules interface
  */
 
-struct demux_t
-{
-    struct vlc_common_members obj;
-
-    /* Module properties */
-    module_t    *p_module;
-
-    /* eg informative but needed (we can have access+demux) */
-    char        *psz_name;
-    char        *psz_url;
-    const char  *psz_location;
-    char        *psz_filepath;
-
-    union {
-        /**
-         * Input stream
-         *
-         * Depending on the module capability:
-         * - "demux": input byte stream (not NULL)
-         * - "access_demux": a NULL pointer
-         * - "demux_filter": undefined
-         */
-        stream_t *s;
-        /**
-         * Input demuxer
-         *
-         * If the module capability is "demux_filter", this is the upstream
-         * demuxer or demux filter. Otherwise, this is undefined.
-         */
-        demux_t *p_next;
-    };
-
-    /* es output */
-    es_out_t    *out;   /* our p_es_out */
-
-    bool         b_preparsing; /* True if the demux is used to preparse */
-
-    /* set by demuxer */
-    int (*pf_demux)  ( demux_t * );   /* demux one frame only */
-    int (*pf_control)( demux_t *, int i_query, va_list args);
-
-    void *p_sys;
-
-    /* Weak link to parent input */
-    input_thread_t *p_input;
-};
-
 /* pf_demux return values */
 #define VLC_DEMUXER_EOF       0
 #define VLC_DEMUXER_EGENERIC -1
@@ -152,7 +105,7 @@ enum demux_query_e
      * Can fail only if synchronous and <b>not</b> an access-demuxer. The
      * underlying input stream then determines the PTS delay.
      *
-     * arg1= int64_t * */
+     * arg1= vlc_tick_t * */
     DEMUX_GET_PTS_DELAY = 0x101,
 
     /** Retrieves stream meta-data.
@@ -223,9 +176,9 @@ enum demux_query_e
     DEMUX_SET_POSITION,         /* arg1= double arg2= bool b_precise    res=can fail    */
 
     /* LENGTH/TIME in microsecond, 0 if unknown */
-    DEMUX_GET_LENGTH,           /* arg1= int64_t *      res=    */
-    DEMUX_GET_TIME,             /* arg1= int64_t *      res=    */
-    DEMUX_SET_TIME,             /* arg1= int64_t arg2= bool b_precise   res=can fail    */
+    DEMUX_GET_LENGTH,           /* arg1= vlc_tick_t *   res=    */
+    DEMUX_GET_TIME,             /* arg1= vlc_tick_t *   res=    */
+    DEMUX_SET_TIME,             /* arg1= vlc_tick_t arg2= bool b_precise   res=can fail    */
 
     /**
      * \todo Document
@@ -238,11 +191,13 @@ enum demux_query_e
      * arg4= int *pi_seekpoint_offset(0) */
     DEMUX_GET_TITLE_INFO,
 
-    /* DEMUX_SET_GROUP/SET_ES only a hint for demuxer (mainly DVB) to allow not
-     * reading everything (you should not use this to call es_out_Control)
-     * if you don't know what to do with it, just IGNORE it, it is safe(r)
-     * -1 means all group, 0 default group (first es added) */
-    DEMUX_SET_GROUP,            /* arg1= int, arg2=const vlc_list_t *   can fail */
+    /* DEMUX_SET_GROUP_* / DEMUX_SET_ES is only a hint for demuxer (mainly DVB)
+     * to avoid parsing everything (you should not use this to call
+     * es_out_Control()).
+     * If you don't know what to do with it, just IGNORE it: it is safe(r). */
+    DEMUX_SET_GROUP_DEFAULT,
+    DEMUX_SET_GROUP_ALL,
+    DEMUX_SET_GROUP_LIST,       /* arg1= size_t, arg2= const int *, can fail */
     DEMUX_SET_ES,               /* arg1= int                            can fail */
 
     /* Ask the demux to demux until the given date at the next pf_demux call
@@ -250,7 +205,7 @@ enum demux_query_e
      * XXX: not mandatory (except for subtitle demux) but will help a lot
      * for multi-input
      */
-    DEMUX_SET_NEXT_DEMUX_TIME,  /* arg1= int64_t        can fail */
+    DEMUX_SET_NEXT_DEMUX_TIME,  /* arg1= vlc_tick_t     can fail */
     /* FPS for correct subtitles handling */
     DEMUX_GET_FPS,              /* arg1= double *       res=can fail    */
 
@@ -288,8 +243,6 @@ enum demux_query_e
     /** Checks whether the stream is actually a playlist, rather than a real
      * stream.
      *
-     * \warning The prototype is different from STREAM_IS_DIRECTORY.
-     *
      * Can fail if the stream is not a playlist (same as returning false).
      *
      * arg1= bool * */
@@ -323,12 +276,13 @@ enum demux_query_e
  * Main Demux
  *************************************************************************/
 
-/* stream_t *s could be null and then it mean a access+demux in one */
 VLC_API demux_t *demux_New( vlc_object_t *p_obj, const char *psz_name,
-                            const char *psz_path, stream_t *s, es_out_t *out );
+                            stream_t *s, es_out_t *out );
 
-VLC_API void demux_Delete( demux_t * );
-
+static inline void demux_Delete(demux_t *demux)
+{
+    vlc_stream_Delete(demux);
+}
 
 VLC_API int demux_vaControlHelper( stream_t *, int64_t i_start, int64_t i_end,
                                    int64_t i_bitrate, int i_align, int i_query, va_list args );
@@ -411,6 +365,42 @@ static inline bool demux_IsForced( demux_t *p_demux, const char *psz_name )
    if( p_demux->psz_name == NULL || strcmp( p_demux->psz_name, psz_name ) )
         return false;
     return true;
+}
+
+static inline int demux_SetPosition( demux_t *p_demux, double pos, bool precise,
+                                     bool absolute)
+{
+    if( !absolute )
+    {
+        double current_pos;
+        int ret = demux_Control( p_demux, DEMUX_GET_POSITION, &current_pos );
+        if( ret != VLC_SUCCESS )
+            return ret;
+        pos += current_pos;
+    }
+
+    if( pos < 0.f )
+        pos = 0.f;
+    else if( pos > 1.f )
+        pos = 1.f;
+    return demux_Control( p_demux, DEMUX_SET_POSITION, pos, precise );
+}
+
+static inline int demux_SetTime( demux_t *p_demux, vlc_tick_t time, bool precise,
+                                 bool absolute )
+{
+    if( !absolute )
+    {
+        vlc_tick_t current_time;
+        int ret = demux_Control( p_demux, DEMUX_GET_TIME, &current_time );
+        if( ret != VLC_SUCCESS )
+            return ret;
+        time += current_time;
+    }
+
+    if( time < 0 )
+        time = 0;
+    return demux_Control( p_demux, DEMUX_SET_TIME, time, precise );
 }
 
 /**

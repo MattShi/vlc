@@ -46,7 +46,7 @@ static void Close( vlc_object_t * );
 vlc_module_begin ()
     set_shortname( N_("VCD"))
     set_description( N_("VCD input") )
-    set_capability( "access", 60 )
+    set_capability( "access", 0 )
     set_callbacks( Open, Close )
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_ACCESS )
@@ -63,7 +63,7 @@ vlc_module_end ()
 #define VCD_BLOCKS_ONCE 20
 #define VCD_DATA_ONCE   (VCD_BLOCKS_ONCE * VCD_DATA_SIZE)
 
-struct access_sys_t
+typedef struct
 {
     vcddev_t    *vcddev;                            /* vcd device descriptor */
     uint64_t    offset;
@@ -80,7 +80,7 @@ struct access_sys_t
 
     int         i_sector;                                  /* Current Sector */
     int         *p_sectors;                                 /* Track sectors */
-};
+} access_sys_t;
 
 static block_t *Block( stream_t *, bool * );
 static int      Seek( stream_t *, uint64_t );
@@ -255,8 +255,8 @@ static int Control( stream_t *p_access, int i_query, va_list args )
 
         /* */
         case STREAM_GET_PTS_DELAY:
-            *va_arg( args, int64_t * ) = INT64_C(1000)
-                * var_InheritInteger(p_access, "disc-caching");
+            *va_arg( args, vlc_tick_t * ) = VLC_TICK_FROM_MS(
+                var_InheritInteger(p_access, "disc-caching") );
             break;
 
         /* */

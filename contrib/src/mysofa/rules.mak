@@ -9,7 +9,10 @@ ifeq ($(call need_pkg,"mysofa"),)
 PKGS_FOUND += mysofa
 endif
 
-DEPS_mysofa += pthreads zlib $(DEPS_pthreads) $(DEPS_zlib)
+DEPS_mysofa += zlib $(DEPS_zlib)
+ifdef HAVE_WIN32
+DEPS_mysofa += pthreads $(DEPS_pthreads)
+endif
 
 $(TARBALLS)/libmysofa-$(MYSOFA_VERSION).tar.gz:
 	$(call download_pkg,$(MYSOFA_URL),mysofa)

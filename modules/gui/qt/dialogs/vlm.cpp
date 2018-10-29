@@ -27,9 +27,8 @@
 # include "config.h"
 #endif
 
-#include "dialogs/vlm.hpp"
-
 #ifdef ENABLE_VLM
+#include "dialogs/vlm.hpp"
 #include "dialogs/open.hpp"
 #include "dialogs/sout.hpp"
 #include "util/qt_dirs.hpp"
@@ -56,7 +55,7 @@
 
 VLMDialog::VLMDialog( intf_thread_t *_p_intf ) : QVLCFrame( _p_intf )
 {
-    vlm_t *p_vlm = vlm_New( p_intf );
+    vlm_t *p_vlm = vlm_New( p_intf->obj.libvlc, NULL );
 
     if( !p_vlm )
     {

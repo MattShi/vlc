@@ -122,7 +122,7 @@ EXTRA_CFLAGS += -m32
 EXTRA_LDFLAGS += -m32
 endif
 
-XCODE_FLAGS = MACOSX_DEPLOYMENT_TARGET=$(MIN_OSX_VERSION) -sdk macosx$(OSX_VERSION) -arch $(ARCH)
+XCODE_FLAGS += -arch $(ARCH)
 
 endif
 
@@ -136,9 +136,16 @@ endif
 EXTRA_CFLAGS += $(CFLAGS)
 endif
 
+LN_S = ln -s
 ifdef HAVE_WIN32
 ifneq ($(shell $(CC) $(CFLAGS) -E -dM -include _mingw.h - < /dev/null | grep -E __MINGW64_VERSION_MAJOR),)
 HAVE_MINGW_W64 := 1
+endif
+ifndef HAVE_CROSS_COMPILE
+LN_S = cp -R
+endif
+ifneq ($(findstring clang, $(shell $(CC) --version)),)
+HAVE_CLANG := 1
 endif
 endif
 
@@ -185,6 +192,9 @@ HAVE_FPU = 1
 endif
 
 ACLOCAL_AMFLAGS += -I$(PREFIX)/share/aclocal
+ifneq ($(wildcard $(TOPSRC)/../extras/tools/build/share/aclocal/*),)
+ACLOCAL_AMFLAGS += -I$(abspath $(TOPSRC)/../extras/tools/build/share/aclocal)
+endif
 export ACLOCAL_AMFLAGS
 
 #########
@@ -345,6 +355,11 @@ RECONF = mkdir -p -- $(PREFIX)/share/aclocal && \
 CMAKE = cmake . -DCMAKE_TOOLCHAIN_FILE=$(abspath toolchain.cmake) \
 		-DCMAKE_INSTALL_PREFIX=$(PREFIX) $(CMAKE_GENERATOR)
 
+ifeq ($(V),1)
+CMAKE += -DCMAKE_VERBOSE_MAKEFILE:BOOL=ON
+endif
+
+
 ifdef GPL
 REQUIRE_GPL =
 else
@@ -472,9 +487,9 @@ endif
 endif
 ifdef HAVE_DARWIN_OS
 	echo "set(CMAKE_SYSTEM_NAME Darwin)" >> $@
-	echo "set(CMAKE_C_FLAGS $(CFLAGS) $(EXTRA_CFLAGS))" >> $@
-	echo "set(CMAKE_CXX_FLAGS $(CFLAGS) $(EXTRA_CXXFLAGS))" >> $@
-	echo "set(CMAKE_LD_FLAGS $(LDFLAGS))" >> $@
+	echo "set(CMAKE_C_FLAGS \"$(CFLAGS) $(EXTRA_CFLAGS)\")" >> $@
+	echo "set(CMAKE_CXX_FLAGS \"$(CFLAGS) $(EXTRA_CXXFLAGS)\")" >> $@
+	echo "set(CMAKE_LD_FLAGS \"$(LDFLAGS)\")" >> $@
 	echo "set(CMAKE_AR ar CACHE FILEPATH "Archiver")" >> $@
 ifdef HAVE_IOS
 	echo "set(CMAKE_OSX_SYSROOT $(IOS_SDK))" >> $@
@@ -498,6 +513,7 @@ endif
 ifdef HAVE_CROSS_COMPILE
 	echo "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)" >> $@
 	echo "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> $@
+	echo "set(PKG_CONFIG_EXECUTABLE $(PKG_CONFIG))" >> $@
 endif
 
 # Default pattern rules

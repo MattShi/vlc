@@ -47,7 +47,7 @@ struct wl_surface;
  * Window handle type
  */
 enum vout_window_type {
-    VOUT_WINDOW_TYPE_INVALID=0 /**< Invalid or unspecified window type */,
+    VOUT_WINDOW_TYPE_DUMMY /**< Dummy window (not an actual window) */,
     VOUT_WINDOW_TYPE_XID /**< X11 window */,
     VOUT_WINDOW_TYPE_HWND /**< Win32 or OS/2 window */,
     VOUT_WINDOW_TYPE_NSOBJECT /**< MacOS X view */,
@@ -61,15 +61,24 @@ enum vout_window_type {
 enum vout_window_control {
     VOUT_WINDOW_SET_STATE, /* unsigned state */
     VOUT_WINDOW_SET_SIZE,   /* unsigned i_width, unsigned i_height */
-    VOUT_WINDOW_SET_FULLSCREEN, /* int b_fullscreen */
-    VOUT_WINDOW_HIDE_MOUSE, /* int b_hide */
+    VOUT_WINDOW_SET_FULLSCREEN, /* void */
+    VOUT_WINDOW_UNSET_FULLSCREEN, /* void */
+    VOUT_WINDOW_HIDE_MOUSE VLC_DEPRECATED_ENUM,
+};
+
+/**
+ * Window management state.
+ */
+enum vout_window_state {
+    VOUT_WINDOW_STATE_NORMAL,
+    VOUT_WINDOW_STATE_ABOVE,
+    VOUT_WINDOW_STATE_BELOW,
 };
 
 /**
  * Window mouse event type for vout_window_mouse_event_t
  */
 enum vout_window_mouse_event_type {
-    VOUT_WINDOW_MOUSE_STATE,
     VOUT_WINDOW_MOUSE_MOVED,
     VOUT_WINDOW_MOUSE_PRESSED,
     VOUT_WINDOW_MOUSE_RELEASED,
@@ -88,12 +97,10 @@ typedef struct vout_window_mouse_event_t
 } vout_window_mouse_event_t;
 
 typedef struct vout_window_cfg_t {
-    /* Window handle type */
-    unsigned type;
-
     /* If true, a standalone window is requested */
     bool is_standalone;
     bool is_fullscreen;
+    bool is_decorated;
 
 #ifdef __APPLE__
     /* Window position hint */
@@ -107,11 +114,23 @@ typedef struct vout_window_cfg_t {
 
 } vout_window_cfg_t;
 
-typedef struct vout_window_owner {
-    void *sys;
+struct vout_window_callbacks {
     void (*resized)(vout_window_t *, unsigned width, unsigned height);
     void (*closed)(vout_window_t *);
-    void (*mouse_event)(vout_window_t *, const vout_window_mouse_event_t *mouse);
+    void (*state_changed)(vout_window_t *, unsigned state);
+    void (*windowed)(vout_window_t *);
+    void (*fullscreened)(vout_window_t *, const char *id);
+
+    void (*mouse_event)(vout_window_t *,
+                        const vout_window_mouse_event_t *mouse);
+    void (*keyboard_event)(vout_window_t *, unsigned key);
+
+    void (*output_event)(vout_window_t *, const char *id, const char *desc);
+};
+
+typedef struct vout_window_owner {
+    const struct vout_window_callbacks *cbs;
+    void *sys;
 } vout_window_owner_t;
 
 /**
@@ -138,10 +157,6 @@ struct vout_window_t {
       * and the \ref display union are to be set.
       *
       * The possible values are defined in \ref vout_window_type.
-      *
-      * VOUT_WINDOW_TYPE_INVALID is a special placeholder type. It means that
-      * any windowing system is acceptable. In that case, the plugin must set
-      * its actual type during activation.
       */
     unsigned type;
 
@@ -204,8 +219,7 @@ struct vout_window_t {
  *
  * @param module plugin name (usually "$window")
  * @note If you are inside a "vout display", you must use
- / vout_display_NewWindow() and vout_display_DeleteWindow() instead.
- * This enables recycling windows.
+ * vout_display_NewWindow() instead. This enables recycling windows.
  */
 VLC_API vout_window_t * vout_window_New(vlc_object_t *, const char *module, const vout_window_cfg_t *, const vout_window_owner_t *);
 
@@ -260,19 +274,29 @@ static inline int vout_window_SetSize(vout_window_t *window,
 }
 
 /**
- * Sets fullscreen mode.
+ * Requests fullscreen mode.
+ *
+ * \param id nul-terminated output identifier, NULL for default
+ *
+ * \retval VLC_SUCCESS The request has been queued to the windowing system
+ * (that does <b>not</b> imply that the request is complete nor succesful).
+ * \retval VLC_EGENERIC The request could not be queued, e.g. the back-end does
+ * not implement toggling between fullscreen and windowed modes.
  */
-static inline int vout_window_SetFullScreen(vout_window_t *window, bool full)
+static inline int vout_window_SetFullScreen(vout_window_t *window,
+                                            const char *id)
 {
-    return vout_window_Control(window, VOUT_WINDOW_SET_FULLSCREEN, full);
+    return vout_window_Control(window, VOUT_WINDOW_SET_FULLSCREEN, id);
 }
 
 /**
- * Hide the mouse cursor
+ * Requests windowed mode.
+ *
+ * \return \see vout_window_SetFullScreen()
  */
-static inline int vout_window_HideMouse(vout_window_t *window, bool hide)
+static inline int vout_window_UnsetFullScreen(vout_window_t *window)
 {
-    return vout_window_Control(window, VOUT_WINDOW_HIDE_MOUSE, hide);
+    return vout_window_Control(window, VOUT_WINDOW_UNSET_FULLSCREEN);
 }
 
 /**
@@ -287,36 +311,57 @@ static inline int vout_window_HideMouse(vout_window_t *window, bool hide)
 static inline void vout_window_ReportSize(vout_window_t *window,
                                           unsigned width, unsigned height)
 {
-    if (window->owner.resized != NULL)
-        window->owner.resized(window, width, height);
+    window->owner.cbs->resized(window, width, height);
 }
 
 static inline void vout_window_ReportClose(vout_window_t *window)
 {
-    if (window->owner.closed != NULL)
-        window->owner.closed(window);
+    if (window->owner.cbs->closed != NULL)
+        window->owner.cbs->closed(window);
+}
+
+/**
+ * Reports the current window state.
+ *
+ * This notifies the owner of the window that the state of the window changed.
+ * \param state \see vout_window_state
+ */
+static inline void vout_window_ReportState(vout_window_t *window,
+                                           unsigned state)
+{
+    if (window->owner.cbs->state_changed != NULL)
+        window->owner.cbs->state_changed(window, state);
+}
+
+/**
+ * Reports that the window is not in full screen.
+ *
+ * This notifies the owner of the window that the window is windowed, i.e. not
+ * in full screen mode.
+ */
+static inline void vout_window_ReportWindowed(vout_window_t *window)
+{
+    if (window->owner.cbs->windowed != NULL)
+        window->owner.cbs->windowed(window);
+}
+
+/**
+ * Reports that the window is in full screen.
+ *
+ * \param id fullscreen output nul-terminated identifier, NULL for default
+ */
+static inline void vout_window_ReportFullscreen(vout_window_t *window,
+                                                const char *id)
+{
+    if (window->owner.cbs->fullscreened != NULL)
+        window->owner.cbs->fullscreened(window, id);
 }
 
 static inline void vout_window_SendMouseEvent(vout_window_t *window,
                                               const vout_window_mouse_event_t *mouse)
 {
-    if (window->owner.mouse_event != NULL)
-        window->owner.mouse_event(window, mouse);
-}
-
-/**
- * Send a full mouse state
- *
- * The mouse position must be expressed against window unit. You can use this
- * function of others vout_window_ReportMouse*() functions.
- */
-static inline void vout_window_ReportMouseState(vout_window_t *window,
-                                                int x, int y, int button_mask)
-{
-    const vout_window_mouse_event_t mouse = {
-        VOUT_WINDOW_MOUSE_STATE, x, y, button_mask
-    };
-    vout_window_SendMouseEvent(window, &mouse);
+    if (window->owner.cbs->mouse_event != NULL)
+        window->owner.cbs->mouse_event(window, mouse);
 }
 
 /**
@@ -367,6 +412,33 @@ static inline void vout_window_ReportMouseDoubleClick(vout_window_t *window,
         VOUT_WINDOW_MOUSE_DOUBLE_CLICK, 0, 0, button,
     };
     vout_window_SendMouseEvent(window, &mouse);
+}
+
+static inline void vout_window_ReportKeyPress(vout_window_t *window, int key)
+{
+    if (window->owner.cbs->keyboard_event != NULL)
+        window->owner.cbs->keyboard_event(window, key);
+}
+
+/**
+ * Adds/removes a fullscreen output.
+ *
+ * This notifies the owner of the window that a usable fullscreen output has
+ * been added, changed or removed.
+ *
+ * If an output with the same identifier is already known, its name will be
+ * updated. Otherwise it will be added.
+ * If the name parameter is NULL, the output will be removed.
+ *
+ * \param id unique nul-terminated identifier for the output
+ * \param name human-readable name
+ */
+static inline void vout_window_ReportOutputDevice(vout_window_t *window,
+                                                  const char *id,
+                                                  const char *name)
+{
+    if (window->owner.cbs->output_event != NULL)
+        window->owner.cbs->output_event(window, id, name);
 }
 
 /** @} */

@@ -164,8 +164,8 @@ std::size_t SegmentInformation::getAllSegments(std::vector<ISegment *> &retSegme
 
 uint64_t SegmentInformation::getLiveStartSegmentNumber(uint64_t def) const
 {
-    const mtime_t i_max_buffering = getPlaylist()->getMaxBuffering() +
-                                    /* FIXME: add dynamic pts-delay */ CLOCK_FREQ;
+    const vlc_tick_t i_max_buffering = getPlaylist()->getMaxBuffering() +
+                                    /* FIXME: add dynamic pts-delay */ VLC_TICK_FROM_SEC(1);
 
     /* Try to never buffer up to really end */
     const uint64_t OFFSET_FROM_END = 3;
@@ -198,7 +198,7 @@ uint64_t SegmentInformation::getLiveStartSegmentNumber(uint64_t def) const
         /* Else compute, current time and timeshiftdepth based */
         else if( mediaSegmentTemplate->duration.Get() )
         {
-            mtime_t i_delay = getPlaylist()->suggestedPresentationDelay.Get();
+            vlc_tick_t i_delay = getPlaylist()->suggestedPresentationDelay.Get();
 
             if( i_delay == 0 || i_delay > getPlaylist()->timeShiftBufferDepth.Get() )
                  i_delay = getPlaylist()->timeShiftBufferDepth.Get();
@@ -215,8 +215,11 @@ uint64_t SegmentInformation::getLiveStartSegmentNumber(uint64_t def) const
             else
                 start = end - count;
 
-            const uint64_t bufcount = ( OFFSET_FROM_END + timescale.ToScaled(i_max_buffering) /
-                                        mediaSegmentTemplate->duration.Get() );
+            uint64_t bufcount = ( OFFSET_FROM_END + timescale.ToScaled(i_max_buffering) /
+                                  mediaSegmentTemplate->duration.Get() );
+            /* Ensure we always pick > start # of availability window as this segment might no longer be avail */
+            if( end - start <= bufcount )
+                bufcount = end - start - 1;
 
             return ( end - start > bufcount ) ? end - bufcount : start;
         }
@@ -340,7 +343,7 @@ ISegment * SegmentInformation::getSegment(SegmentInfoType type, uint64_t pos) co
     return NULL;
 }
 
-bool SegmentInformation::getSegmentNumberByTime(mtime_t time, uint64_t *ret) const
+bool SegmentInformation::getSegmentNumberByTime(vlc_tick_t time, uint64_t *ret) const
 {
     if( mediaSegmentTemplate )
     {
@@ -349,8 +352,8 @@ bool SegmentInformation::getSegmentNumberByTime(mtime_t time, uint64_t *ret) con
         SegmentTimeline *timeline = mediaSegmentTemplate->segmentTimeline.Get();
         if(timeline)
         {
-            time = timescale.ToScaled(time);
-            *ret = timeline->getElementNumberByScaledPlaybackTime(time);
+            stime_t st = timescale.ToScaled(time);
+            *ret = timeline->getElementNumberByScaledPlaybackTime(st);
             return true;
         }
 
@@ -372,16 +375,16 @@ bool SegmentInformation::getSegmentNumberByTime(mtime_t time, uint64_t *ret) con
     else if ( segmentList && !segmentList->getSegments().empty() )
     {
         const Timescale timescale = segmentList->inheritTimescale();
-        time = timescale.ToScaled(time);
-        return segmentList->getSegmentNumberByScaledTime(time, ret);
+        stime_t st = timescale.ToScaled(time);
+        return segmentList->getSegmentNumberByScaledTime(st, ret);
     }
     else if( segmentBase )
     {
         const Timescale timescale = inheritTimescale();
-        time = timescale.ToScaled(time);
+        stime_t st = timescale.ToScaled(time);
         *ret = 0;
         const std::vector<ISegment *> list = segmentBase->subSegments();
-        return SegmentInfoCommon::getSegmentNumberByScaledTime(list, time, ret);
+        return SegmentInfoCommon::getSegmentNumberByScaledTime(list, st, ret);
     }
 
     if(parent)
@@ -391,7 +394,7 @@ bool SegmentInformation::getSegmentNumberByTime(mtime_t time, uint64_t *ret) con
 }
 
 bool SegmentInformation::getPlaybackTimeDurationBySegmentNumber(uint64_t number,
-                                                                mtime_t *time, mtime_t *duration) const
+                                                                vlc_tick_t *time, vlc_tick_t *duration) const
 {
     SegmentList *segList;
     MediaSegmentTemplate *mediaTemplate;
@@ -445,7 +448,7 @@ SegmentInformation * SegmentInformation::getChildByID(const adaptive::ID &id)
     return NULL;
 }
 
-void SegmentInformation::mergeWith(SegmentInformation *updated, mtime_t prunetime)
+void SegmentInformation::mergeWith(SegmentInformation *updated, vlc_tick_t prunetime)
 {
     /* Support Segment List for now */
     if(segmentList && updated->segmentList)
@@ -476,7 +479,7 @@ void SegmentInformation::mergeWithTimeline(SegmentTimeline *updated)
     }
 }
 
-void SegmentInformation::pruneByPlaybackTime(mtime_t time)
+void SegmentInformation::pruneByPlaybackTime(vlc_tick_t time)
 {
     if(segmentList)
         segmentList->pruneByPlaybackTime(time);
@@ -502,7 +505,7 @@ void SegmentInformation::pruneBySegmentNumber(uint64_t num)
 
 uint64_t SegmentInformation::translateSegmentNumber(uint64_t num, const SegmentInformation *from) const
 {
-    mtime_t time, duration;
+    vlc_tick_t time, duration;
     if( from->getPlaybackTimeDurationBySegmentNumber(num, &time, &duration) )
         getSegmentNumberByTime(time, &num);
     return num;
@@ -516,7 +519,7 @@ SegmentInformation::SwitchPolicy SegmentInformation::getSwitchPolicy() const
         return switchpolicy;
 }
 
-mtime_t SegmentInformation::getPeriodStart() const
+vlc_tick_t SegmentInformation::getPeriodStart() const
 {
     if(parent)
         return parent->getPeriodStart();

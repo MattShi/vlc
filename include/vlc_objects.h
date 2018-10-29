@@ -85,11 +85,10 @@ struct vlc_common_members
 #if !defined(__cplusplus)
 # define VLC_OBJECT(x) \
     _Generic((x)->obj, \
-        struct vlc_common_members: (vlc_object_t *)(&(x)->obj), \
-        const struct vlc_common_members: (const vlc_object_t *)(&(x)->obj) \
+        struct vlc_common_members: (vlc_object_t *)(x) \
     )
 #else
-# define VLC_OBJECT( x ) ((vlc_object_t *)&(x)->obj)
+# define VLC_OBJECT(x) ((vlc_object_t *)(x))
 #endif
 
 /* Object flags */
@@ -118,10 +117,8 @@ VLC_API void *vlc_object_create( vlc_object_t *, size_t ) VLC_MALLOC VLC_USED;
 VLC_API vlc_object_t *vlc_object_find_name( vlc_object_t *, const char * ) VLC_USED VLC_DEPRECATED;
 VLC_API void * vlc_object_hold( vlc_object_t * );
 VLC_API void vlc_object_release( vlc_object_t * );
-VLC_API vlc_list_t *vlc_list_children( vlc_object_t * ) VLC_USED;
-VLC_API void vlc_list_release( vlc_list_t * );
+VLC_API size_t vlc_list_children(vlc_object_t *, vlc_object_t **, size_t) VLC_USED;
 VLC_API char *vlc_object_get_name( const vlc_object_t * ) VLC_USED;
-#define vlc_object_get_name(o) vlc_object_get_name(VLC_OBJECT(o))
 
 #define vlc_object_create(a,b) vlc_object_create( VLC_OBJECT(a), b )
 
@@ -134,11 +131,77 @@ VLC_API char *vlc_object_get_name( const vlc_object_t * ) VLC_USED;
 #define vlc_object_release(a) \
     vlc_object_release( VLC_OBJECT(a) )
 
-#define vlc_list_children(a) \
-    vlc_list_children( VLC_OBJECT(a) )
+/**
+ * @defgroup objres Object resources
+ *
+ * The object resource functions tie resource allocation to an instance of
+ * a module through a VLC object.
+ * Such resource will be automatically freed, in first in last out order,
+ * when the module instance associated with the VLC object is terminated.
+ *
+ * Specifically, if the module instance activation/probe function fails, the
+ * resource will be freed immediately after the failure within
+ * vlc_module_load(). If the activation succeeds, the resource will be freed
+ * when the module instance is terminated with vlc_module_unload().
+ *
+ * This is a convenience mechanism to save explicit clean-up function calls
+ * in modules.
+ *
+ * @{
+ */
 
-VLC_API VLC_MALLOC void *vlc_obj_malloc(vlc_object_t *, size_t);
-VLC_API VLC_MALLOC void *vlc_obj_calloc(vlc_object_t *, size_t, size_t);
-VLC_API void vlc_obj_free(vlc_object_t *, void *);
+/**
+ * Allocates memory for a module.
+ *
+ * This function allocates memory from the heap for a module instance.
+ * The memory is uninitialized.
+ *
+ * @param obj VLC object to tie the memory allocation to
+ * @param size byte size of the memory allocation
+ *
+ * @return a pointer to the allocated memory, or NULL on error (errno is set).
+ */
+VLC_API VLC_MALLOC void *vlc_obj_malloc(vlc_object_t *obj, size_t size);
 
+/**
+ * Allocates a zero-initialized table for a module.
+ *
+ * This function allocates a table from the heap for a module instance.
+ * The memory is initialized to all zeroes.
+ *
+ * @param obj VLC object to tie the memory allocation to
+ * @param nmemb number of table entries
+ * @param size byte size of a table entry
+ *
+ * @return a pointer to the allocated memory, or NULL on error (errno is set).
+ */
+VLC_API VLC_MALLOC void *vlc_obj_calloc(vlc_object_t *obj, size_t nmemb,
+                                        size_t size);
+
+/**
+ * Duplicates a string for a module.
+ *
+ * This function allocates a copy of a nul-terminated string for a module
+ * instance.
+ *
+ * @param obj VLC object to tie the memory allocation to
+ * @param str string to copy
+ *
+ * @return a pointer to the copy, or NULL on error (errno is set).
+ */
+VLC_API VLC_MALLOC char *vlc_obj_strdup(vlc_object_t *obj, const char *str);
+
+/**
+ * Manually frees module memory.
+ *
+ * This function manually frees a resource allocated with vlc_obj_malloc(),
+ * vlc_obj_calloc() or vlc_obj_strdup() before the module instance is
+ * terminated. This is seldom necessary.
+ *
+ * @param obj VLC object that the allocation was tied to
+ * @param ptr pointer to the allocated resource
+ */
+VLC_API void vlc_obj_free(vlc_object_t *obj, void *ptr);
+
+/** @} */
 /** @} */

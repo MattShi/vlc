@@ -23,7 +23,6 @@ VLC.app: install
 	xcrun plutil -convert binary1 $@/Contents/Info.plist
 	## Create Frameworks dir and copy required ones
 	mkdir -p $@/Contents/Frameworks
-	cp -R $(CONTRIB_DIR)/Frameworks/Growl.framework $@/Contents/Frameworks
 if HAVE_SPARKLE
 	cp -R $(CONTRIB_DIR)/Frameworks/Sparkle.framework $@/Contents/Frameworks
 endif
@@ -34,7 +33,7 @@ endif
 if BUILD_LUA
 	## Copy lua scripts
 	cp -r "$(pkgdatadir)/lua" $@/Contents/MacOS/share/
-	cp -r "$(pkglibdir)/lua" $@/Contents/MacOS/
+	cp -r "$(pkglibexecdir)/lua" $@/Contents/MacOS/
 endif
 	## HRTFs
 	cp -r $(srcdir)/share/hrtfs $@/Contents/MacOS/share/
@@ -51,7 +50,7 @@ endif
 	mkdir -p $@/Contents/MacOS/plugins
 	find $(prefix)/lib/vlc/plugins -name 'lib*_plugin.dylib' -maxdepth 2 -exec cp -a {} $@/Contents/MacOS/plugins \;
 	## Copy libbluray jar
-	find "$(CONTRIB_DIR)/share/java/" -name 'libbluray-j2se-*.jar' -maxdepth 1 -exec cp -a {} $@/Contents/MacOS/plugins \;
+	-cp -a $(CONTRIB_DIR)/share/java/libbluray*.jar $@/Contents/MacOS/plugins/
 	## Install binary
 	cp $(prefix)/bin/vlc $@/Contents/MacOS/VLC
 	## Generate plugin cache
@@ -95,7 +94,8 @@ package-macosx-release:
 	cp -Rp $(top_builddir)/VLC.app $(top_builddir)/vlc-$(VERSION)-release/
 	cp $(srcdir)/extras/package/macosx/dmg/* $(top_builddir)/vlc-$(VERSION)-release/
 	cp "$(srcdir)/extras/package/macosx/codesign.sh" $(top_builddir)/vlc-$(VERSION)-release/
-	cp "$(prefix)/lib/vlc/vlc-cache-gen" $(top_builddir)/vlc-$(VERSION)-release/
+	cp "$(srcdir)/extras/package/macosx/vlc-hardening.entitlements" $(top_builddir)/vlc-$(VERSION)-release/
+	cp "$(pkglibexecdir)/vlc-cache-gen" $(top_builddir)/vlc-$(VERSION)-release/
 	install_name_tool -add_rpath "@executable_path/VLC.app/Contents/MacOS/lib" $(top_builddir)/vlc-$(VERSION)-release/vlc-cache-gen
 	zip -r -y -9 $(top_builddir)/vlc-$(VERSION)-release.zip $(top_builddir)/vlc-$(VERSION)-release
 	rm -rf "$(top_builddir)/vlc-$(VERSION)-release"
@@ -126,6 +126,7 @@ package-translations:
 ###############################################################################
 
 EXTRA_DIST += \
+	extras/package/macosx/env.build.sh \
 	extras/package/macosx/build.sh \
 	extras/package/macosx/codesign.sh \
 	extras/package/macosx/configure.sh \

@@ -71,8 +71,8 @@ struct event_thread_t
     HCURSOR cursor_arrow;
     HCURSOR cursor_empty;
     unsigned button_pressed;
-    mtime_t hide_timeout;
-    mtime_t last_moved;
+    int64_t hide_timeout;
+    vlc_tick_t last_moved;
 
     /* Gestures */
     win32_gesture_sys_t *p_gesture;
@@ -133,7 +133,7 @@ static void CALLBACK HideMouse(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwT
 static void UpdateCursorMoved( event_thread_t *p_event )
 {
     UpdateCursor( p_event, true );
-    p_event->last_moved = mdate();
+    p_event->last_moved = vlc_tick_now();
     if( p_event->hwnd )
         SetTimer( p_event->hwnd, (UINT_PTR)p_event, p_event->hide_timeout, HideMouse );
 }
@@ -699,7 +699,6 @@ static int Win32VoutCreateWindow( event_thread_t *p_event )
     #if defined(MODULE_NAME_IS_direct3d9) || defined(MODULE_NAME_IS_direct3d11)
     else
     {
-        vout_display_DeleteWindow(vd, NULL);
         p_event->parent_window = NULL;
         p_event->hparent = GetDesktopHandle(vd);
     }
@@ -885,10 +884,6 @@ static void Win32VoutCloseWindow( event_thread_t *p_event )
     if( p_event->hfswnd )
         DestroyWindow( p_event->hfswnd );
 
-    #if defined(MODULE_NAME_IS_direct3d9) || defined(MODULE_NAME_IS_direct3d11)
-    if( !p_event->use_desktop )
-    #endif
-        vout_display_DeleteWindow( vd, p_event->parent_window );
     p_event->hwnd = NULL;
 
     HINSTANCE hInstance = GetModuleHandle(NULL);

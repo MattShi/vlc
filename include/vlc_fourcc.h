@@ -186,6 +186,8 @@
 #define VLC_CODEC_CINEFORM        VLC_FOURCC('C','F','H','D')
 #define VLC_CODEC_SPEEDHQ         VLC_FOURCC('S','H','Q','2')
 #define VLC_CODEC_PIXLET          VLC_FOURCC('p','x','l','t')
+#define VLC_CODEC_MAGICYUV        VLC_FOURCC('M','8','Y','0')
+#define VLC_CODEC_IMM4            VLC_FOURCC('I','M','M','4')
 
 /***********
  * Chromas
@@ -229,6 +231,9 @@
 /* Planar YUV 4:2:2 Y:U:V 12-bit stored on 16 bits */
 #define VLC_CODEC_I422_12L        VLC_FOURCC('I','2','C','L')
 #define VLC_CODEC_I422_12B        VLC_FOURCC('I','2','C','B')
+/* Planar YUV 4:2:2 Y:U:V 16-bit stored on 16 bits */
+#define VLC_CODEC_I422_16L        VLC_FOURCC('I','2','F','L')
+#define VLC_CODEC_I422_16B        VLC_FOURCC('I','2','F','B')
 
 /* Planar YUV 4:4:0 Y:U:V */
 #define VLC_CODEC_I440            VLC_FOURCC('I','4','4','0')
@@ -341,11 +346,24 @@
 #define VLC_CODEC_GBR_PLANAR_9L   VLC_FOURCC('G','B','9','L')
 #define VLC_CODEC_GBR_PLANAR_10B  VLC_FOURCC('G','B','A','B')
 #define VLC_CODEC_GBR_PLANAR_10L  VLC_FOURCC('G','B','A','L')
+#define VLC_CODEC_GBR_PLANAR_12B  VLC_FOURCC('G','B','B','B')
+#define VLC_CODEC_GBR_PLANAR_12L  VLC_FOURCC('G','B','B','L')
+#define VLC_CODEC_GBR_PLANAR_14B  VLC_FOURCC('G','B','D','B')
+#define VLC_CODEC_GBR_PLANAR_14L  VLC_FOURCC('G','B','D','L')
 #define VLC_CODEC_GBR_PLANAR_16L  VLC_FOURCC('G','B','F','L')
 #define VLC_CODEC_GBR_PLANAR_16B  VLC_FOURCC('G','B','F','B')
+#define VLC_CODEC_GBRA_PLANAR_10B VLC_FOURCC('G','B','0','B')
+#define VLC_CODEC_GBRA_PLANAR_10L VLC_FOURCC('G','B','0','L')
+#define VLC_CODEC_GBRA_PLANAR_12B VLC_FOURCC('G','B','C','B')
+#define VLC_CODEC_GBRA_PLANAR_12L VLC_FOURCC('G','B','C','L')
+#define VLC_CODEC_GBRA_PLANAR_16L VLC_FOURCC('G','B','E','L')
+#define VLC_CODEC_GBRA_PLANAR_16B VLC_FOURCC('G','B','E','B')
 
 /* 8 bits grey */
 #define VLC_CODEC_GREY            VLC_FOURCC('G','R','E','Y')
+/* 16 bits grey */
+#define VLC_CODEC_GREY_16L        VLC_FOURCC('G','R','F','L')
+#define VLC_CODEC_GREY_16B        VLC_FOURCC('G','R','F','B')
 
 /* VDPAU video surface YCbCr 4:2:0 */
 #define VLC_CODEC_VDPAU_VIDEO_420 VLC_FOURCC('V','D','V','0')
@@ -402,6 +420,7 @@
 #define VLC_CODEC_PCX             VLC_FOURCC('p','c','x',' ')
 #define VLC_CODEC_XWD             VLC_FOURCC('X','W','D',' ')
 #define VLC_CODEC_TXD             VLC_FOURCC('T','X','D',' ')
+#define VLC_CODEC_WEBP            VLC_FOURCC('W','E','B','P')
 
 
 /* Audio codec */
@@ -524,6 +543,10 @@
 #define VLC_CODEC_ADPCM_IMA_EA_SEAD          VLC_FOURCC('S','E','A','D')
 #define VLC_CODEC_ADPCM_EA_R1                VLC_FOURCC('E','A','R','1')
 #define VLC_CODEC_ADPCM_IMA_APC              VLC_FOURCC('A','I','P','C')
+#define VLC_CODEC_DSD_LSBF                   VLC_FOURCC('D','S','D','l')
+#define VLC_CODEC_DSD_LSBF_PLANAR            VLC_FOURCC('D','S','F','l')
+#define VLC_CODEC_DSD_MSBF                   VLC_FOURCC('D','S','D',' ')
+#define VLC_CODEC_DSD_MSBF_PLANAR            VLC_FOURCC('D','S','F','m')
 
 /* Subtitle */
 #define VLC_CODEC_SPU       VLC_FOURCC('s','p','u',' ')
@@ -554,6 +577,7 @@
 #define VLC_CODEC_CEA608    VLC_FOURCC('c','6','0','8')
 #define VLC_CODEC_CEA708    VLC_FOURCC('c','7','0','8')
 #define VLC_CODEC_TTML      VLC_FOURCC('T','T','M','L')
+#define VLC_CODEC_TTML_TS   VLC_FOURCC('T','s','M','L') /* special for EN.303.560 */
 #define VLC_CODEC_WEBVTT    VLC_FOURCC('w','v','t','t')
 
 /* XYZ colorspace 12 bits packed in 16 bits, organisation |XXX0|YYY0|ZZZ0| */
@@ -660,6 +684,15 @@ VLC_API const vlc_fourcc_t * vlc_fourcc_GetYUVFallback( vlc_fourcc_t );
  * It will always return a non NULL pointer that must not be freed.
  */
 VLC_API const vlc_fourcc_t * vlc_fourcc_GetRGBFallback( vlc_fourcc_t );
+
+/**
+ * It returns a list (terminated with the value 0) of fourccs in decreasing
+ * priority order for the given chroma. It will return either YUV or RGB
+ * fallbacks depending on whether or not the fourcc given is YUV.
+ *
+ * It will always return a non NULL pointer that must not be freed.
+ */
+VLC_API const vlc_fourcc_t * vlc_fourcc_GetFallback( vlc_fourcc_t );
 
 /**
  * It returns true if the given fourcc is YUV and false otherwise.

@@ -37,9 +37,9 @@ namespace adaptive
                 NearOptimalContext();
 
             private:
-                mtime_t buffering_min;
-                mtime_t buffering_level;
-                mtime_t buffering_target;
+                vlc_tick_t buffering_min;
+                vlc_tick_t buffering_level;
+                vlc_tick_t buffering_target;
                 unsigned last_download_rate;
                 MovingAverage<unsigned> average;
         };
@@ -47,17 +47,17 @@ namespace adaptive
         class NearOptimalAdaptationLogic : public AbstractAdaptationLogic
         {
             public:
-                NearOptimalAdaptationLogic(vlc_object_t *);
+                NearOptimalAdaptationLogic();
                 virtual ~NearOptimalAdaptationLogic();
 
                 virtual BaseRepresentation* getNextRepresentation(BaseAdaptationSet *, BaseRepresentation *);
-                virtual void                updateDownloadRate     (const ID &, size_t, mtime_t); /* reimpl */
+                virtual void                updateDownloadRate     (const ID &, size_t, vlc_tick_t); /* reimpl */
                 virtual void                trackerEvent           (const SegmentTrackerEvent &); /* reimpl */
 
             private:
                 BaseRepresentation *        getNextQualityIndex( BaseAdaptationSet *, RepresentationSelector &,
-                                                                 float gammaP, mtime_t VD,
-                                                                 mtime_t Q /*current buffer level*/);
+                                                                 float gammaP, float VD,
+                                                                 float Q /*current buffer level*/);
                 float                       getUtility(const BaseRepresentation *);
                 unsigned                    getAvailableBw(unsigned, const BaseRepresentation *) const;
                 unsigned                    getMaxCurrentBw() const;
@@ -65,7 +65,6 @@ namespace adaptive
                 std::map<uint64_t, float>   utilities;
                 unsigned                    currentBps;
                 unsigned                    usedBps;
-                vlc_object_t *              p_obj;
                 vlc_mutex_t                 lock;
         };
     }

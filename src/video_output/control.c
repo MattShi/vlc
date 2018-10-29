@@ -27,7 +27,7 @@
 
 #include <vlc_common.h>
 #include <vlc_vout.h>
-#include "control.h"
+#include "vout_internal.h"
 
 /* */
 void vout_control_cmd_Init(vout_control_cmd_t *cmd, int type)
@@ -40,14 +40,11 @@ void vout_control_cmd_Clean(vout_control_cmd_t *cmd)
 {
     switch (cmd->type) {
     case VOUT_CONTROL_SUBPICTURE:
-        if (cmd->u.subpicture)
-            subpicture_Delete(cmd->u.subpicture);
+        if (cmd->subpicture)
+            subpicture_Delete(cmd->subpicture);
         break;
-    case VOUT_CONTROL_OSD_TITLE:
     case VOUT_CONTROL_CHANGE_FILTERS:
-    case VOUT_CONTROL_CHANGE_SUB_SOURCES:
-    case VOUT_CONTROL_CHANGE_SUB_FILTERS:
-        free(cmd->u.string);
+        free(cmd->string);
         break;
     default:
         break;
@@ -63,7 +60,7 @@ void vout_control_Init(vout_control_t *ctrl)
 
     ctrl->is_dead = false;
     ctrl->can_sleep = true;
-    ctrl->is_processing = false;
+    ctrl->is_processing = true;
     ARRAY_INIT(ctrl->cmd);
 }
 
@@ -130,7 +127,7 @@ void vout_control_PushBool(vout_control_t *ctrl, int type, bool boolean)
     vout_control_cmd_t cmd;
 
     vout_control_cmd_Init(&cmd, type);
-    cmd.u.boolean = boolean;
+    cmd.boolean = boolean;
     vout_control_Push(ctrl, &cmd);
 }
 void vout_control_PushInteger(vout_control_t *ctrl, int type, int integer)
@@ -138,24 +135,15 @@ void vout_control_PushInteger(vout_control_t *ctrl, int type, int integer)
     vout_control_cmd_t cmd;
 
     vout_control_cmd_Init(&cmd, type);
-    cmd.u.integer = integer;
+    cmd.integer = integer;
     vout_control_Push(ctrl, &cmd);
 }
-void vout_control_PushTime(vout_control_t *ctrl, int type, mtime_t time)
+void vout_control_PushTime(vout_control_t *ctrl, int type, vlc_tick_t time)
 {
     vout_control_cmd_t cmd;
 
     vout_control_cmd_Init(&cmd, type);
-    cmd.u.time = time;
-    vout_control_Push(ctrl, &cmd);
-}
-void vout_control_PushMessage(vout_control_t *ctrl, int type, int channel, const char *string)
-{
-    vout_control_cmd_t cmd;
-
-    vout_control_cmd_Init(&cmd, type);
-    cmd.u.message.channel = channel;
-    cmd.u.message.string = strdup(string);
+    cmd.time = time;
     vout_control_Push(ctrl, &cmd);
 }
 void vout_control_PushPair(vout_control_t *ctrl, int type, int a, int b)
@@ -163,8 +151,8 @@ void vout_control_PushPair(vout_control_t *ctrl, int type, int a, int b)
     vout_control_cmd_t cmd;
 
     vout_control_cmd_Init(&cmd, type);
-    cmd.u.pair.a = a;
-    cmd.u.pair.b = b;
+    cmd.pair.a = a;
+    cmd.pair.b = b;
     vout_control_Push(ctrl, &cmd);
 }
 void vout_control_PushString(vout_control_t *ctrl, int type, const char *string)
@@ -172,12 +160,12 @@ void vout_control_PushString(vout_control_t *ctrl, int type, const char *string)
     vout_control_cmd_t cmd;
 
     vout_control_cmd_Init(&cmd, type);
-    cmd.u.string = string ? strdup(string) : NULL;
+    cmd.string = string ? strdup(string) : NULL;
     vout_control_Push(ctrl, &cmd);
 }
 
 int vout_control_Pop(vout_control_t *ctrl, vout_control_cmd_t *cmd,
-                     mtime_t deadline)
+                     vlc_tick_t deadline)
 {
     vlc_mutex_lock(&ctrl->lock);
     if (ctrl->cmd.i_size <= 0) {
@@ -185,7 +173,7 @@ int vout_control_Pop(vout_control_t *ctrl, vout_control_cmd_t *cmd,
         vlc_cond_broadcast(&ctrl->wait_acknowledge);
 
         /* Spurious wakeups are perfectly fine */
-        if (deadline > VLC_TS_INVALID && ctrl->can_sleep)
+        if (deadline != VLC_TICK_INVALID && ctrl->can_sleep)
             vlc_cond_timedwait(&ctrl->wait_request, &ctrl->lock, deadline);
     }
 

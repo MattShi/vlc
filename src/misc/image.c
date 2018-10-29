@@ -49,6 +49,17 @@
 #include <libvlc.h>
 #include <vlc_modules.h>
 
+struct decoder_owner
+{
+    decoder_t dec;
+    image_handler_t *p_image;
+};
+
+static inline struct decoder_owner *dec_get_owner( decoder_t *p_dec )
+{
+    return container_of( p_dec, struct decoder_owner, dec );
+}
+
 static picture_t *ImageRead( image_handler_t *, block_t *,
                              const video_format_t *, video_format_t * );
 static picture_t *ImageReadUrl( image_handler_t *, const char *,
@@ -61,7 +72,7 @@ static int ImageWriteUrl( image_handler_t *, picture_t *,
 static picture_t *ImageConvert( image_handler_t *, picture_t *,
                                 const video_format_t *, video_format_t * );
 
-static decoder_t *CreateDecoder( vlc_object_t *, const video_format_t * );
+static decoder_t *CreateDecoder( image_handler_t *, const video_format_t * );
 static void DeleteDecoder( decoder_t * );
 static encoder_t *CreateEncoder( vlc_object_t *, const video_format_t *,
                                  const video_format_t * );
@@ -121,11 +132,10 @@ void image_HandlerDelete( image_handler_t *p_image )
  *
  */
 
-static int ImageQueueVideo( decoder_t *p_dec, picture_t *p_pic )
+static void ImageQueueVideo( decoder_t *p_dec, picture_t *p_pic )
 {
-    image_handler_t *p_image = p_dec->p_queue_ctx;
-    picture_fifo_Push( p_image->outfifo, p_pic );
-    return 0;
+    struct decoder_owner *p_owner = dec_get_owner( p_dec );
+    picture_fifo_Push( p_owner->p_image->outfifo, p_pic );
 }
 
 static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
@@ -145,7 +155,7 @@ static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
     /* Start a decoder */
     if( !p_image->p_dec )
     {
-        p_image->p_dec = CreateDecoder( p_image->p_parent, p_fmt_in );
+        p_image->p_dec = CreateDecoder( p_image, p_fmt_in );
         if( !p_image->p_dec )
         {
             block_Release(p_block);
@@ -158,11 +168,9 @@ static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
             block_Release(p_block);
             return NULL;
         }
-        p_image->p_dec->pf_queue_video = ImageQueueVideo;
-        p_image->p_dec->p_queue_ctx = p_image;
     }
 
-    p_block->i_pts = p_block->i_dts = mdate();
+    p_block->i_pts = p_block->i_dts = vlc_tick_now();
     int ret = p_image->p_dec->pf_decode( p_image->p_dec, p_block );
     if( ret == VLCDEC_SUCCESS )
     {
@@ -180,7 +188,7 @@ static picture_t *ImageRead( image_handler_t *p_image, block_t *p_block,
         }
         if( lostcount > 0 )
             msg_Warn( p_image->p_parent, "Image decoder output more than one "
-                      "picture (%d)", lostcount );
+                      "picture (%u)", lostcount );
     }
 
     if( p_pic == NULL )
@@ -662,21 +670,31 @@ static picture_t *video_new_buffer( decoder_t *p_dec )
     return picture_NewFromFormat( &p_dec->fmt_out.video );
 }
 
-static decoder_t *CreateDecoder( vlc_object_t *p_this, const video_format_t *fmt )
+static decoder_t *CreateDecoder( image_handler_t *p_image, const video_format_t *fmt )
 {
     decoder_t *p_dec;
+    struct decoder_owner *p_owner;
 
-    p_dec = vlc_custom_create( p_this, sizeof( *p_dec ), "image decoder" );
-    if( p_dec == NULL )
+    p_owner = vlc_custom_create( p_image->p_parent, sizeof( *p_owner ), "image decoder" );
+    if( p_owner == NULL )
         return NULL;
+    p_dec = &p_owner->dec;
+    p_owner->p_image = p_image;
 
     p_dec->p_module = NULL;
     es_format_InitFromVideo( &p_dec->fmt_in, fmt );
     es_format_Init( &p_dec->fmt_out, VIDEO_ES, 0 );
     p_dec->b_frame_drop_allowed = false;
 
-    p_dec->pf_vout_format_update = video_update_format;
-    p_dec->pf_vout_buffer_new = video_new_buffer;
+    static const struct decoder_owner_callbacks dec_cbs =
+    {
+        .video = {
+            .format_update = video_update_format,
+            .buffer_new = video_new_buffer,
+            .queue = ImageQueueVideo,
+        },
+    };
+    p_dec->cbs = &dec_cbs;
 
     /* Find a suitable decoder module */
     p_dec->p_module = module_need_var( p_dec, "video decoder", "codec" );
@@ -792,13 +810,18 @@ static picture_t *filter_new_picture( filter_t *p_filter )
     return picture_NewFromFormat( &p_filter->fmt_out.video );
 }
 
+static const struct filter_video_callbacks image_filter_cbs =
+{
+    .buffer_new = filter_new_picture,
+};
+
 static filter_t *CreateFilter( vlc_object_t *p_this, const es_format_t *p_fmt_in,
                                const video_format_t *p_fmt_out )
 {
     filter_t *p_filter;
 
     p_filter = vlc_custom_create( p_this, sizeof(filter_t), "filter" );
-    p_filter->owner.video.buffer_new = filter_new_picture;
+    p_filter->owner.video = &image_filter_cbs;
 
     es_format_Copy( &p_filter->fmt_in, p_fmt_in );
     es_format_Copy( &p_filter->fmt_out, p_fmt_in );

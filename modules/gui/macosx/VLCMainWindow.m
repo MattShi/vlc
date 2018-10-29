@@ -34,7 +34,7 @@
 #import "VLCMainMenu.h"
 #import "VLCOpenWindowController.h"
 #import "VLCPlaylist.h"
-#import "SideBarItem.h"
+#import "VLCSourceListItem.h"
 #import <math.h>
 #import <vlc_playlist.h>
 #import <vlc_url.h>
@@ -42,12 +42,14 @@
 #import <vlc_services_discovery.h>
 #import "VLCPLModel.h"
 
-#import "PXSourceList.h"
-#import "PXSourceListDataSource.h"
+#import "PXSourceList/PXSourceList.h"
+#import "PXSourceList/PXSourceListDataSource.h"
+
+#import "VLCSourceListTableCellView.h"
 
 #import "VLCMainWindowControlsBar.h"
 #import "VLCVoutView.h"
-#import "VLCVoutWindowController.h"
+#import "VLCVideoOutputProvider.h"
 
 
 @interface VLCMainWindow() <PXSourceListDataSource, PXSourceListDelegate, NSOutlineViewDataSource, NSOutlineViewDelegate, NSWindowDelegate, NSAnimationDelegate, NSSplitViewDelegate>
@@ -91,7 +93,7 @@ static const float f_min_window_height = 307.;
     char *key;
     NSString *o_key;
 
-    key = config_GetPsz(getIntf(), keyString);
+    key = config_GetPsz(keyString);
     o_key = [NSString stringWithFormat:@"%s", key];
     FREENULL(key);
 
@@ -145,17 +147,10 @@ static const float f_min_window_height = 307.;
      * General setup
      */
 
-    NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-
     BOOL splitViewShouldBeHidden = NO;
 
     [self setDelegate:self];
     [self setRestorable:NO];
-    // TODO: useOptimizedDrawing deprecated since 10.10, but no
-    // documentation provided what do use instead.
-    // see radar://23047516
-    [self useOptimizedDrawing:YES];
     [self setExcludedFromWindowsMenu:YES];
     [self setAcceptsMouseMovedEvents:YES];
     [self setFrameAutosaveName:@"mainwindow"];
@@ -184,15 +179,13 @@ static const float f_min_window_height = 307.;
     // Search Field
     [_searchField setToolTip:_NS("Search in Playlist")];
     [_searchField.cell setPlaceholderString:_NS("Search")];
-    [_searchField.cell accessibilitySetOverrideValue:_NS("Search the playlist. Results will be selected in the table.")
-                                        forAttribute:NSAccessibilityDescriptionAttribute];
+    _searchField.accessibilityLabel = _NS("Search the playlist. Results will be selected in the table.");
 
     // Dropzone
     [_dropzoneLabel setStringValue:_NS("Drop media here")];
     [_dropzoneImageView setImage:imageFromRes(@"dropzone")];
     [_dropzoneButton setTitle:_NS("Open media...")];
-    [_dropzoneButton.cell accessibilitySetOverrideValue:_NS("Open a dialog to select the media to play")
-                                           forAttribute:NSAccessibilityDescriptionAttribute];
+    _dropzoneButton.accessibilityLabel = _NS("Open a dialog to select the media to play");
 
     // Podcast view
     [_podcastAddButton setTitle:_NS("Subscribe")];
@@ -212,61 +205,64 @@ static const float f_min_window_height = 307.;
 
     /* interface builder action */
     CGFloat f_threshold_height = f_min_video_height + [self.controlsBar height];
-    if (self.darkInterface)
-        f_threshold_height += [self.titlebarView frame].size.height;
+
     if ([[self contentView] frame].size.height < f_threshold_height)
         splitViewShouldBeHidden = YES;
 
     // Set that here as IB seems to be buggy
-    if (self.darkInterface)
-        [self setContentMinSize:NSMakeSize(604., f_min_window_height + [self.titlebarView frame].size.height)];
-    else
-        [self setContentMinSize:NSMakeSize(604., f_min_window_height)];
+    [self setContentMinSize:NSMakeSize(604., f_min_window_height)];
 
     _fspanel = [[VLCFSPanelController alloc] init];
     [_fspanel showWindow:self];
 
-    /* make sure we display the desired default appearance when VLC launches for the first time */
+    // Check for first run and show metadata network access question
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if (![defaults objectForKey:@"VLCFirstRun"]) {
         [defaults setObject:[NSDate date] forKey:@"VLCFirstRun"];
 
         [_sidebarView expandItem:nil expandChildren:YES];
 
-        NSAlert *albumArtAlert = [NSAlert alertWithMessageText:_NS("Check for album art and metadata?") defaultButton:_NS("Enable Metadata Retrieval") alternateButton:_NS("No, Thanks") otherButton:nil informativeTextWithFormat:@"%@",_NS("VLC can check online for album art and metadata to enrich your playback experience, e.g. by providing track information when playing Audio CDs. To provide this functionality, VLC will send information about your contents to trusted services in an anonymized form.")];
+        NSAlert *albumArtAlert = [[NSAlert alloc] init];
+        [albumArtAlert setMessageText:_NS("Check for album art and metadata?")];
+        [albumArtAlert setInformativeText:_NS("VLC can check online for album art and metadata to enrich your playback experience, e.g. by providing track information when playing Audio CDs. To provide this functionality, VLC will send information about your contents to trusted services in an anonymized form.")];
+        [albumArtAlert addButtonWithTitle:_NS("Enable Metadata Retrieval")];
+        [albumArtAlert addButtonWithTitle:_NS("No, Thanks")];
+
         NSInteger returnValue = [albumArtAlert runModal];
-        config_PutInt(getIntf(), "metadata-network-access", returnValue == NSAlertDefaultReturn);
+        config_PutInt("metadata-network-access", returnValue == NSAlertFirstButtonReturn);
     }
 
-    if (self.darkInterface) {
-        [defaultCenter addObserver: self selector: @selector(windowResizedOrMoved:) name: NSWindowDidResizeNotification object: nil];
-        [defaultCenter addObserver: self selector: @selector(windowResizedOrMoved:) name: NSWindowDidMoveNotification object: nil];
+    [_playlistScrollView setBorderType:NSNoBorder];
+    [_sidebarScrollView setBorderType:NSNoBorder];
 
-        [self setBackgroundColor: [NSColor clearColor]];
-        [self setOpaque: NO];
-        [self display];
-        [self setHasShadow:NO];
-        [self setHasShadow:YES];
-
-        self.previousSavedFrame = [self frame];
-    } else {
-        [_playlistScrollView setBorderType:NSNoBorder];
-        [_sidebarScrollView setBorderType:NSNoBorder];
-    }
-
-    [defaultCenter addObserver: self selector: @selector(someWindowWillClose:) name: NSWindowWillCloseNotification object: nil];
-    [defaultCenter addObserver: self selector: @selector(someWindowWillMiniaturize:) name: NSWindowWillMiniaturizeNotification object:nil];
-    [defaultCenter addObserver: self selector: @selector(applicationWillTerminate:) name: NSApplicationWillTerminateNotification object: nil];
-    [defaultCenter addObserver: self selector: @selector(mainSplitViewDidResizeSubviews:) name: NSSplitViewDidResizeSubviewsNotification object:_splitView];
+    // Register for NSNotifications about Window and SplitView changes
+    NSNotificationCenter *defaultCenter = [NSNotificationCenter defaultCenter];
+    [defaultCenter addObserver:self
+                      selector:@selector(someWindowWillClose:)
+                          name:NSWindowWillCloseNotification
+                        object:nil];
+    [defaultCenter addObserver:self
+                      selector:@selector(someWindowWillMiniaturize:)
+                          name:NSWindowWillMiniaturizeNotification
+                        object:nil];
+    [defaultCenter addObserver:self
+                      selector:@selector(applicationWillTerminate:)
+                          name:NSApplicationWillTerminateNotification
+                        object:nil];
+    [defaultCenter addObserver:self
+                      selector:@selector(mainSplitViewDidResizeSubviews:)
+                          name:NSSplitViewDidResizeSubviewsNotification
+                        object:_splitView];
 
     if (splitViewShouldBeHidden) {
         [self hideSplitView:YES];
         f_lastSplitViewHeight = 300;
     }
 
-    /* sanity check for the window size */
-    NSRect frame = [self frame];
-    NSSize screenSize = [[self screen] frame].size;
-    if (screenSize.width <= frame.size.width || screenSize.height <= frame.size.height) {
+    // Resize MainWindow to the screen size, if it exceeds the screens size
+    NSSize windowSize = self.frame.size;
+    NSSize screenSize = self.screen.frame.size;
+    if (screenSize.width <= windowSize.width || screenSize.height <= windowSize.height) {
         self.nativeVideoSize = screenSize;
         [self resizeWindow];
     }
@@ -290,15 +286,13 @@ static const float f_min_window_height = 307.;
         isAReload = YES;
 
     o_sidebaritems = [[NSMutableArray alloc] init];
-    SideBarItem *libraryItem = [SideBarItem itemWithTitle:_NS("LIBRARY") identifier:@"library"];
-    SideBarItem *playlistItem = [SideBarItem itemWithTitle:_NS("Playlist") identifier:@"playlist"];
+    VLCSourceListItem *libraryItem = [VLCSourceListItem itemWithTitle:_NS("LIBRARY") identifier:@"library"];
+    VLCSourceListItem *playlistItem = [VLCSourceListItem itemWithTitle:_NS("Playlist") identifier:@"playlist"];
     [playlistItem setIcon: imageFromRes(@"sidebar-playlist")];
-    SideBarItem *medialibraryItem = [SideBarItem itemWithTitle:_NS("Media Library") identifier:@"medialibrary"];
-    [medialibraryItem setIcon: imageFromRes(@"sidebar-playlist")];
-    SideBarItem *mycompItem = [SideBarItem itemWithTitle:_NS("MY COMPUTER") identifier:@"mycomputer"];
-    SideBarItem *devicesItem = [SideBarItem itemWithTitle:_NS("DEVICES") identifier:@"devices"];
-    SideBarItem *lanItem = [SideBarItem itemWithTitle:_NS("LOCAL NETWORK") identifier:@"localnetwork"];
-    SideBarItem *internetItem = [SideBarItem itemWithTitle:_NS("INTERNET") identifier:@"internet"];
+    VLCSourceListItem *mycompItem = [VLCSourceListItem itemWithTitle:_NS("MY COMPUTER") identifier:@"mycomputer"];
+    VLCSourceListItem *devicesItem = [VLCSourceListItem itemWithTitle:_NS("DEVICES") identifier:@"devices"];
+    VLCSourceListItem *lanItem = [VLCSourceListItem itemWithTitle:_NS("LOCAL NETWORK") identifier:@"localnetwork"];
+    VLCSourceListItem *internetItem = [VLCSourceListItem itemWithTitle:_NS("INTERNET") identifier:@"internet"];
 
     /* SD subnodes, inspired by the Qt intf */
     char **ppsz_longnames = NULL;
@@ -317,22 +311,22 @@ static const float f_min_window_height = 307.;
         o_identifier = toNSStr(*ppsz_name);
         switch (*p_category) {
             case SD_CAT_INTERNET:
-                [internetItems addObject: [SideBarItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
+                [internetItems addObject: [VLCSourceListItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
                 [[internetItems lastObject] setIcon: imageFromRes(@"sidebar-podcast")];
                 [[internetItems lastObject] setSdtype: SD_CAT_INTERNET];
                 break;
             case SD_CAT_DEVICES:
-                [devicesItems addObject: [SideBarItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
+                [devicesItems addObject: [VLCSourceListItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
                 [[devicesItems lastObject] setIcon: imageFromRes(@"sidebar-local")];
                 [[devicesItems lastObject] setSdtype: SD_CAT_DEVICES];
                 break;
             case SD_CAT_LAN:
-                [lanItems addObject: [SideBarItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
+                [lanItems addObject: [VLCSourceListItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
                 [[lanItems lastObject] setIcon: imageFromRes(@"sidebar-local")];
                 [[lanItems lastObject] setSdtype: SD_CAT_LAN];
                 break;
             case SD_CAT_MYCOMPUTER:
-                [mycompItems addObject: [SideBarItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
+                [mycompItems addObject: [VLCSourceListItem itemWithTitle: _NS(*ppsz_longname) identifier: o_identifier]];
                 if (!strncmp(*ppsz_name, "video_dir", 9))
                     [[mycompItems lastObject] setIcon: imageFromRes(@"sidebar-movie")];
                 else if (!strncmp(*ppsz_name, "audio_dir", 9))
@@ -359,7 +353,7 @@ static const float f_min_window_height = 307.;
     free(ppsz_longnames);
     free(p_categories);
 
-    [libraryItem setChildren: [NSArray arrayWithObjects:playlistItem, medialibraryItem, nil]];
+    [libraryItem setChildren: [NSArray arrayWithObjects:playlistItem, nil]];
     [o_sidebaritems addObject: libraryItem];
     if ([mycompItem hasChildren])
         [o_sidebaritems addObject: mycompItem];
@@ -389,10 +383,7 @@ static const float f_min_window_height = 307.;
 // Show split view and hide the video view
 - (void)makeSplitViewVisible
 {
-    if (self.darkInterface)
-        [self setContentMinSize: NSMakeSize(604., f_min_window_height + [self.titlebarView frame].size.height)];
-    else
-        [self setContentMinSize: NSMakeSize(604., f_min_window_height)];
+    [self setContentMinSize: NSMakeSize(604., f_min_window_height)];
 
     NSRect old_frame = [self frame];
     CGFloat newHeight = [self minSize].height;
@@ -417,10 +408,7 @@ static const float f_min_window_height = 307.;
 // Hides the split view and makes the vout view in foreground
 - (void)makeSplitViewHidden
 {
-    if (self.darkInterface)
-        [self setContentMinSize: NSMakeSize(604., f_min_video_height + [self.titlebarView frame].size.height)];
-    else
-        [self setContentMinSize: NSMakeSize(604., f_min_video_height)];
+    [self setContentMinSize: NSMakeSize(604., f_min_video_height)];
 
     [_splitView setHidden:YES];
     [self.videoView setHidden:NO];
@@ -432,7 +420,6 @@ static const float f_min_window_height = 307.;
     if ([[self.videoView subviews] count] > 0)
         [self makeFirstResponder: [[self.videoView subviews] firstObject]];
 }
-
 
 - (void)changePlaylistState:(VLCPlaylistStateEvent)event
 {
@@ -531,7 +518,7 @@ static const float f_min_window_height = 307.;
 
 - (void)someWindowWillMiniaturize:(NSNotification *)notification
 {
-    if (config_GetInt(getIntf(), "macosx-pause-minimized")) {
+    if (config_GetInt("macosx-pause-minimized")) {
         id obj = [notification object];
 
         if ([obj class] == [VLCVideoWindowCommon class] || [obj class] == [VLCDetachedVideoWindow class] || ([obj class] == [VLCMainWindow class] && !self.nonembedded)) {
@@ -567,13 +554,8 @@ static const float f_min_window_height = 307.;
         [self setFrame:winrect display:YES animate:YES];
     }
 
-    if (self.darkInterface) {
-        [self setContentMinSize: NSMakeSize(604., [self.controlsBar height] + [self.titlebarView frame].size.height)];
-        [self setContentMaxSize: NSMakeSize(FLT_MAX, [self.controlsBar height] + [self.titlebarView frame].size.height)];
-    } else {
-        [self setContentMinSize: NSMakeSize(604., [self.controlsBar height])];
-        [self setContentMaxSize: NSMakeSize(FLT_MAX, [self.controlsBar height])];
-    }
+    [self setContentMinSize: NSMakeSize(604., [self.controlsBar height])];
+    [self setContentMaxSize: NSMakeSize(FLT_MAX, [self.controlsBar height])];
 
     b_splitview_removed = YES;
 }
@@ -581,10 +563,7 @@ static const float f_min_window_height = 307.;
 - (void)showSplitView:(BOOL)resize
 {
     [self updateWindow];
-    if (self.darkInterface)
-        [self setContentMinSize:NSMakeSize(604., f_min_window_height + [self.titlebarView frame].size.height)];
-    else
-        [self setContentMinSize:NSMakeSize(604., f_min_window_height)];
+    [self setContentMinSize:NSMakeSize(604., f_min_window_height)];
     [self setContentMaxSize: NSMakeSize(FLT_MAX, FLT_MAX)];
 
     if (resize) {
@@ -603,7 +582,7 @@ static const float f_min_window_height = 307.;
     [self.controlsBar updateTimeSlider];
     [self.fspanel updatePositionAndTime];
 
-    [[[VLCMain sharedInstance] voutController] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
+    [[[VLCMain sharedInstance] voutProvider] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
         [controlsBar updateTimeSlider];
     }];
 
@@ -617,28 +596,28 @@ static const float f_min_window_height = 307.;
     if (p_input) {
         NSString *aString = @"";
 
-        if (!config_GetPsz(getIntf(), "video-title")) {
+        if (!config_GetPsz("video-title")) {
             char *format = var_InheritString(getIntf(), "input-title-format");
             if (format) {
-                char *formated = vlc_strfinput(p_input, format);
+                char *formated = vlc_strfinput(p_input, NULL, format);
                 free(format);
                 aString = toNSStr(formated);
                 free(formated);
             }
         } else
-            aString = toNSStr(config_GetPsz(getIntf(), "video-title"));
+            aString = toNSStr(config_GetPsz("video-title"));
 
         char *uri = input_item_GetURI(input_GetItem(p_input));
 
         NSURL * o_url = [NSURL URLWithString:toNSStr(uri)];
         if ([o_url isFileURL]) {
             [self setRepresentedURL: o_url];
-            [[[VLCMain sharedInstance] voutController] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
+            [[[VLCMain sharedInstance] voutProvider] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
                 [o_window setRepresentedURL:o_url];
             }];
         } else {
             [self setRepresentedURL: nil];
-            [[[VLCMain sharedInstance] voutController] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
+            [[[VLCMain sharedInstance] voutProvider] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
                 [o_window setRepresentedURL:nil];
             }];
         }
@@ -653,7 +632,7 @@ static const float f_min_window_height = 307.;
 
         if ([aString length] > 0) {
             [self setTitle: aString];
-            [[[VLCMain sharedInstance] voutController] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
+            [[[VLCMain sharedInstance] voutProvider] updateWindowsUsingBlock:^(VLCVideoWindowCommon *o_window) {
                 [o_window setTitle:aString];
             }];
 
@@ -673,7 +652,7 @@ static const float f_min_window_height = 307.;
 - (void)updateWindow
 {
     [self.controlsBar updateControls];
-    [[[VLCMain sharedInstance] voutController] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
+    [[[VLCMain sharedInstance] voutProvider] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
         [controlsBar updateControls];
     }];
 
@@ -709,7 +688,7 @@ static const float f_min_window_height = 307.;
     [self.controlsBar setPause];
     [self.fspanel setPause];
 
-    [[[VLCMain sharedInstance] voutController] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
+    [[[VLCMain sharedInstance] voutProvider] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
         [controlsBar setPause];
     }];
 }
@@ -719,7 +698,7 @@ static const float f_min_window_height = 307.;
     [self.controlsBar setPlay];
     [self.fspanel setPlay];
 
-    [[[VLCMain sharedInstance] voutController] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
+    [[[VLCMain sharedInstance] voutProvider] updateControlsBarsUsingBlock:^(VLCControlsBarCommon *controlsBar) {
         [controlsBar setPlay];
     }];
 }
@@ -766,7 +745,7 @@ static const float f_min_window_height = 307.;
         }
 
         [self makeFirstResponder: _playlistScrollView];
-        [[[VLCMain sharedInstance] voutController] updateWindowLevelForHelperWindows: NSNormalWindowLevel];
+        [[[VLCMain sharedInstance] voutProvider] updateWindowLevelForHelperWindows: NSNormalWindowLevel];
 
         // restore alpha value to 1 for the case that macosx-opaqueness is set to < 1
         [self setAlphaValue:1.0];
@@ -854,8 +833,6 @@ static const float f_min_window_height = 307.;
     PL_LOCK;
     if (root == ROOT_TYPE_PLAYLIST)
         [_categoryLabel setStringValue: [_NS("Playlist") stringByAppendingString:[self _playbackDurationOfNode:p_playlist->p_playing]]];
-    else if (root == ROOT_TYPE_MEDIALIBRARY)
-        [_categoryLabel setStringValue: [_NS("Media Library") stringByAppendingString:[self _playbackDurationOfNode:p_playlist->p_media_library]]];
 
     PL_UNLOCK;
 }
@@ -868,17 +845,15 @@ static const float f_min_window_height = 307.;
     playlist_t * p_playlist = pl_Get(getIntf());
     PL_ASSERT_LOCKED;
 
-    mtime_t mt_duration = playlist_GetNodeDuration( node );
+    vlc_tick_t mt_duration = playlist_GetNodeDuration( node );
 
     if (mt_duration < 1)
         return @"";
 
-    mt_duration = mt_duration / 1000000;
-
     NSDateComponentsFormatter *formatter = [[NSDateComponentsFormatter alloc] init];
     formatter.unitsStyle = NSDateComponentsFormatterUnitsStyleAbbreviated;
 
-    NSString* outputString = [formatter stringFromTimeInterval:mt_duration];
+    NSString* outputString = [formatter stringFromTimeInterval:SEC_FROM_VLC_TICK(mt_duration)];
 
     return [NSString stringWithFormat:@" — %@", outputString];
 }
@@ -915,66 +890,9 @@ static const float f_min_window_height = 307.;
         return [[item children] objectAtIndex:index];
 }
 
-
-- (id)sourceList:(PXSourceList*)aSourceList objectValueForItem:(id)item
-{
-    return [item title];
-}
-
-- (void)sourceList:(PXSourceList*)aSourceList setObjectValue:(id)object forItem:(id)item
-{
-    [item setTitle:object];
-}
-
 - (BOOL)sourceList:(PXSourceList*)aSourceList isItemExpandable:(id)item
 {
     return [item hasChildren];
-}
-
-
-- (BOOL)sourceList:(PXSourceList*)aSourceList itemHasBadge:(id)item
-{
-    if ([[item identifier] isEqualToString: @"playlist"] || [[item identifier] isEqualToString: @"medialibrary"])
-        return YES;
-
-    return [item hasBadge];
-}
-
-
-- (NSInteger)sourceList:(PXSourceList*)aSourceList badgeValueForItem:(id)item
-{
-    playlist_t * p_playlist = pl_Get(getIntf());
-    NSInteger i_playlist_size = 0;
-
-    if ([[item identifier] isEqualToString: @"playlist"]) {
-        PL_LOCK;
-        i_playlist_size = p_playlist->p_playing->i_children;
-        PL_UNLOCK;
-
-        return i_playlist_size;
-    }
-    if ([[item identifier] isEqualToString: @"medialibrary"]) {
-        PL_LOCK;
-        if (p_playlist->p_media_library)
-            i_playlist_size = p_playlist->p_media_library->i_children;
-        PL_UNLOCK;
-
-        return i_playlist_size;
-    }
-
-    return [item badgeValue];
-}
-
-
-- (BOOL)sourceList:(PXSourceList*)aSourceList itemHasIcon:(id)item
-{
-    return [item hasIcon];
-}
-
-
-- (NSImage*)sourceList:(PXSourceList*)aSourceList iconForItem:(id)item
-{
-    return [item icon];
 }
 
 - (NSMenu*)sourceList:(PXSourceList*)aSourceList menuForEvent:(NSEvent*)theEvent item:(id)item
@@ -1029,6 +947,10 @@ static const float f_min_window_height = 307.;
     playlist_t * p_playlist = pl_Get(getIntf());
 
     NSIndexSet *selectedIndexes = [_sidebarView selectedRowIndexes];
+
+    if (selectedIndexes.count == 0)
+        return;
+
     id item = [_sidebarView itemAtRow:[selectedIndexes firstIndex]];
 
     //Set the label text to represent the new selection
@@ -1047,16 +969,6 @@ static const float f_min_window_height = 307.;
 
         [self _updatePlaylistTitle];
 
-    } else if ([[item identifier] isEqualToString:@"medialibrary"]) {
-        if (p_playlist->p_media_library) {
-
-            PL_LOCK;
-            [[[[VLCMain sharedInstance] playlist] model] changeRootItem:p_playlist->p_media_library];
-
-            PL_UNLOCK;
-
-            [self _updatePlaylistTitle];
-        }
     } else {
         PL_LOCK;
         const char *title = [[item title] UTF8String];
@@ -1088,9 +1000,42 @@ static const float f_min_window_height = 307.;
                                                       userInfo: nil];
 }
 
+- (NSView *)sourceList:(PXSourceList *)aSourceList viewForItem:(id)item
+{
+    VLCSourceListTableCellView *cellView = nil;
+    if ([aSourceList levelForItem:item] == 0)
+        cellView = [aSourceList makeViewWithIdentifier:@"HeaderCell" owner:nil];
+    else
+        cellView = [aSourceList makeViewWithIdentifier:@"DataCell" owner:nil];
+
+    PXSourceListItem *sourceListItem = item;
+
+    cellView.textField.editable = NO;
+    cellView.textField.selectable = NO;
+
+    cellView.textField.stringValue = sourceListItem.title ? sourceListItem.title : @"";
+    cellView.imageView.image = [item icon];
+
+    // Badge count
+    if ([[item identifier] isEqualToString: @"playlist"]) {
+        playlist_t * p_playlist = pl_Get(getIntf());
+        NSInteger i_playlist_size = 0;
+
+        PL_LOCK;
+        i_playlist_size = p_playlist->p_playing->i_children;
+        PL_UNLOCK;
+
+        cellView.badgeView.integerValue = i_playlist_size;
+    } else {
+        cellView.badgeView.integerValue = sourceListItem.badgeValue.integerValue;
+    }
+
+    return cellView;
+}
+
 - (NSDragOperation)sourceList:(PXSourceList *)aSourceList validateDrop:(id <NSDraggingInfo>)info proposedItem:(id)item proposedChildIndex:(NSInteger)index
 {
-    if ([[item identifier] isEqualToString:@"playlist"] || [[item identifier] isEqualToString:@"medialibrary"]) {
+    if ([[item identifier] isEqualToString:@"playlist"]) {
         NSPasteboard *o_pasteboard = [info draggingPasteboard];
         if ([[o_pasteboard types] containsObject: VLCPLItemPasteboadType] || [[o_pasteboard types] containsObject: NSFilenamesPboardType])
             return NSDragOperationGeneric;
@@ -1107,8 +1052,10 @@ static const float f_min_window_height = 307.;
 
     if ([[item identifier] isEqualToString:@"playlist"])
         p_node = p_playlist->p_playing;
-    else
-        p_node = p_playlist->p_media_library;
+    else {
+        msg_Warn(p_playlist, "dragging non-playlist items is not supported");
+        return NO;
+    }
 
     if ([[o_pasteboard types] containsObject: @"VLCPlaylistItemPboardType"]) {
         NSArray * array = [[[VLCMain sharedInstance] playlist] draggedItems];
@@ -1177,11 +1124,11 @@ static const float f_min_window_height = 307.;
 
     if (sender == _podcastSubscribeOkButton && [[_podcastSubscribeUrlField stringValue] length] > 0) {
         NSMutableString *podcastConf = [[NSMutableString alloc] init];
-        if (config_GetPsz(getIntf(), "podcast-urls") != NULL)
-            [podcastConf appendFormat:@"%s|", config_GetPsz(getIntf(), "podcast-urls")];
+        if (config_GetPsz("podcast-urls") != NULL)
+            [podcastConf appendFormat:@"%s|", config_GetPsz("podcast-urls")];
 
         [podcastConf appendString: [_podcastSubscribeUrlField stringValue]];
-        config_PutPsz(getIntf(), "podcast-urls", [podcastConf UTF8String]);
+        config_PutPsz("podcast-urls", [podcastConf UTF8String]);
         var_SetString(pl_Get(getIntf()), "podcast-urls", [podcastConf UTF8String]);
     }
 }
@@ -1206,11 +1153,11 @@ static const float f_min_window_height = 307.;
         playlist_t * p_playlist = pl_Get(getIntf());
         char *psz_urls = var_InheritString(p_playlist, "podcast-urls");
 
-        NSMutableArray * urls = [[NSMutableArray alloc] initWithArray:[toNSStr(config_GetPsz(getIntf(), "podcast-urls")) componentsSeparatedByString:@"|"]];
+        NSMutableArray * urls = [[NSMutableArray alloc] initWithArray:[toNSStr(config_GetPsz("podcast-urls")) componentsSeparatedByString:@"|"]];
         [urls removeObjectAtIndex: [_podcastUnsubscribePopUpButton indexOfSelectedItem]];
         const char *psz_new_urls = [[urls componentsJoinedByString:@"|"] UTF8String];
         var_SetString(pl_Get(getIntf()), "podcast-urls", psz_new_urls);
-        config_PutPsz(getIntf(), "podcast-urls", psz_new_urls);
+        config_PutPsz("podcast-urls", psz_new_urls);
 
         free(psz_urls);
 
@@ -1252,22 +1199,7 @@ static const float f_min_window_height = 307.;
     [super awakeFromNib];
     [self setAcceptsMouseMovedEvents: YES];
 
-    BOOL darkInterface = config_GetInt(getIntf(), "macosx-interfacestyle");
-
-    if (darkInterface) {
-        [self setBackgroundColor: [NSColor clearColor]];
-
-        [self setOpaque: NO];
-        [self display];
-        [self setHasShadow:NO];
-        [self setHasShadow:YES];
-
-        [self setTitle: _NS("VLC media player")];
-
-        [self setContentMinSize: NSMakeSize(363., f_min_video_height + [[self controlsBar] height] + [self.titlebarView frame].size.height)];
-    } else {
-        [self setContentMinSize: NSMakeSize(363., f_min_video_height + [[self controlsBar] height])];
-    }
+    [self setContentMinSize: NSMakeSize(363., f_min_video_height + [[self controlsBar] height])];
 }
 
 @end

@@ -47,10 +47,6 @@
 # include <fcntl.h>
 #endif
 
-#if defined(USE_OPENGL_ES2)
-#   include <GLES2/gl2ext.h>
-#endif
-
 struct priv
 {
     struct vlc_vaapi_instance *vainst;
@@ -406,11 +402,11 @@ Open(vlc_object_t *obj)
      || tc->gl->egl.destroyImageKHR == NULL)
         return VLC_EGENERIC;
 
-    if (!HasExtension(tc->glexts, "GL_OES_EGL_image"))
+    if (!vlc_gl_StrHasToken(tc->glexts, "GL_OES_EGL_image"))
         return VLC_EGENERIC;
 
     const char *eglexts = tc->gl->egl.queryString(tc->gl, EGL_EXTENSIONS);
-    if (eglexts == NULL || !HasExtension(eglexts, "EGL_EXT_image_dma_buf_import"))
+    if (eglexts == NULL || !vlc_gl_StrHasToken(eglexts, "EGL_EXT_image_dma_buf_import"))
         return VLC_EGENERIC;
 
     struct priv *priv = tc->priv = calloc(1, sizeof(struct priv));
@@ -471,10 +467,6 @@ Open(vlc_object_t *obj)
 
     tc->pf_update  = tc_vaegl_update;
     tc->pf_get_pool = tc_vaegl_get_pool;
-
-    /* Fix the UV plane texture scale factor for GR */
-    if (vlc_sw_chroma == VLC_CODEC_NV12 || vlc_sw_chroma == VLC_CODEC_P010)
-        tc->texs[1].h = (vlc_rational_t) { 1, 2 };
 
     return VLC_SUCCESS;
 error:

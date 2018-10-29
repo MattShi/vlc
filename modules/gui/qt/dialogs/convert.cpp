@@ -192,10 +192,6 @@ void ConvertDialog::close()
                 mrl += ",deinterlace}";
             }
             mrl += ":";
-            if( displayBox->isChecked() )
-            {
-                mrl += "duplicate{dst=display,dst=";
-            }
 
             QString newFileName;
 
@@ -234,11 +230,12 @@ void ConvertDialog::close()
 
             newFileName.replace( QChar('\''), "\\\'" );
 
-            mrl += "std{access=file{no-overwrite},mux=" + profile->getMux()
-                 + ",dst='" + newFileName
-                 + "'}";
+            QString chain = QString("std{access=file{no-overwrite},mux=%1,dst='%2'}")
+                                    .arg( profile->getMux() ).arg( newFileName );
             if( displayBox->isChecked() )
-                mrl += "}";
+                mrl += QString( "duplicate{dst=display,dst=%1}" ).arg( chain );
+            else
+                mrl += chain;
         }
         msg_Dbg( p_intf, "Transcode MRL: %s", qtu( mrl ) );
         mrls.append(mrl);

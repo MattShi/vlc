@@ -70,7 +70,6 @@
 #include <math.h>
 #include <assert.h>
 
-#include <vlc_vout.h>
 #include <vlc_vout_window.h>
 
 /**********************************************************************
@@ -88,6 +87,12 @@ VideoWidget::VideoWidget( intf_thread_t *_p_i, QWidget* p_parent )
     layout->setContentsMargins( 0, 0, 0, 0 );
     stable = NULL;
     p_window = NULL;
+
+    cursorTimer = new QTimer( this );
+    cursorTimer->setSingleShot( true );
+    connect( cursorTimer, SIGNAL(timeout()), this, SLOT(hideCursor()) );
+    cursorTimeout = var_InheritInteger( _p_i, "mouse-hide-timeout" );
+
     show();
 }
 
@@ -297,6 +302,17 @@ void VideoWidget::resizeEvent( QResizeEvent *event )
     reportSize();
 }
 
+void VideoWidget::hideCursor()
+{
+    setCursor( Qt::BlankCursor );
+}
+
+void VideoWidget::showCursor()
+{
+    setCursor( Qt::ArrowCursor );
+    cursorTimer->start( cursorTimeout );
+}
+
 int VideoWidget::qtMouseButton2VLC( Qt::MouseButton qtButton )
 {
     if( p_window == NULL )
@@ -320,6 +336,7 @@ void VideoWidget::mouseReleaseEvent( QMouseEvent *event )
     if( vlc_button >= 0 )
     {
         vout_window_ReportMouseReleased( p_window, vlc_button );
+        showCursor();
         event->accept();
     }
     else
@@ -332,6 +349,7 @@ void VideoWidget::mousePressEvent( QMouseEvent* event )
     if( vlc_button >= 0 )
     {
         vout_window_ReportMousePressed( p_window, vlc_button );
+        showCursor();
         event->accept();
     }
     else
@@ -350,6 +368,7 @@ void VideoWidget::mouseMoveEvent( QMouseEvent *event )
         current_pos *= devicePixelRatio();
 #endif
         vout_window_ReportMouseMoved( p_window, current_pos.x(), current_pos.y() );
+        showCursor();
         event->accept();
     }
     else
@@ -362,6 +381,7 @@ void VideoWidget::mouseDoubleClickEvent( QMouseEvent *event )
     if( vlc_button >= 0 )
     {
         vout_window_ReportMouseDoubleClick( p_window, vlc_button );
+        showCursor();
         event->accept();
     }
     else
@@ -785,6 +805,7 @@ void SpeedControlWidget::updateRate( int sliderValue )
 {
     if( sliderValue == lastValue )
         return;
+    lastValue = sliderValue;
 
     double speed = pow( 2, (double)sliderValue / 17 );
     int rate = INPUT_RATE_DEFAULT / speed;
@@ -885,15 +906,13 @@ void CoverArtLabel::setArtFromFile()
     if( !p_item )
         return;
 
-    QString filePath = QFileDialog::getOpenFileName( this, qtr( "Choose Cover Art" ),
+    QUrl fileUrl = QFileDialog::getOpenFileUrl( this, qtr( "Choose Cover Art" ),
         p_intf->p_sys->filepath, qtr( "Image Files (*.gif *.jpg *.jpeg *.png)" ) );
 
-    if( filePath.isEmpty() )
+    if( fileUrl.isEmpty() )
         return;
 
-    QString fileUrl = QUrl::fromLocalFile( filePath ).toString();
-
-    THEMIM->getIM()->setArt( p_item, fileUrl );
+    THEMIM->getIM()->setArt( p_item, fileUrl.toString() );
 }
 
 void CoverArtLabel::clear()
@@ -902,7 +921,12 @@ void CoverArtLabel::clear()
 }
 
 TimeLabel::TimeLabel( intf_thread_t *_p_intf, TimeLabel::Display _displayType  )
-    : ClickableQLabel(), p_intf( _p_intf ), displayType( _displayType )
+    : ClickableQLabel()
+    , p_intf( _p_intf )
+    , cachedPos( -1 )
+    , cachedTime( 0 )
+    , cachedLength( 0 )
+    , displayType( _displayType )
 {
     b_remainingTime = false;
     if( _displayType != TimeLabel::Elapsed )
@@ -929,8 +953,11 @@ TimeLabel::TimeLabel( intf_thread_t *_p_intf, TimeLabel::Display _displayType  )
     }
     setAlignment( Qt::AlignRight | Qt::AlignVCenter );
 
-    CONNECT( THEMIM->getIM(), positionUpdated( float, int64_t, int ),
-              this, setDisplayPosition( float, int64_t, int ) );
+    CONNECT( THEMIM->getIM(), seekRequested( float ),
+             this, setDisplayPosition( float ) );
+
+    CONNECT( THEMIM->getIM(), positionUpdated( float, vlc_tick_t, int ),
+              this, setDisplayPosition( float, vlc_tick_t, int ) );
 
     connect( this, SIGNAL( broadcastRemainingTime( bool ) ),
          THEMIM->getIM(), SIGNAL( remainingTimeChanged( bool ) ) );
@@ -943,12 +970,21 @@ TimeLabel::TimeLabel( intf_thread_t *_p_intf, TimeLabel::Display _displayType  )
 
 void TimeLabel::setRemainingTime( bool remainingTime )
 {
-    if (displayType != TimeLabel::Elapsed)
+    if( displayType != TimeLabel::Elapsed )
+    {
         b_remainingTime = remainingTime;
+        refresh();
+    }
 }
 
-void TimeLabel::setDisplayPosition( float pos, int64_t t, int length )
+void TimeLabel::refresh()
 {
+    setDisplayPosition( cachedPos, cachedTime, cachedLength );
+}
+
+void TimeLabel::setDisplayPosition( float pos, vlc_tick_t t, int length )
+{
+    cachedPos = pos;
     if( pos == -1.f )
     {
         setMinimumSize( QSize( 0, 0 ) );
@@ -959,7 +995,7 @@ void TimeLabel::setDisplayPosition( float pos, int64_t t, int length )
         return;
     }
 
-    int time = t / 1000000;
+    int time = SEC_FROM_VLC_TICK(t);
 
     secstotimestr( psz_length, length );
     secstotimestr( psz_time, ( b_remainingTime && length ) ? length - time
@@ -1010,28 +1046,14 @@ void TimeLabel::setDisplayPosition( float pos, int64_t t, int length )
             break;
     }
     cachedLength = length;
+    cachedTime = t;
 }
 
 void TimeLabel::setDisplayPosition( float pos )
 {
-    if( pos == -1.f || cachedLength == 0 )
-    {
-        setText( " --:--/--:-- " );
-        return;
-    }
-
-    int time = pos * cachedLength;
-    secstotimestr( psz_time,
-                   ( b_remainingTime && cachedLength ?
-                   cachedLength - time : time ) );
-    QString timestr = QString( "%1%2/%3" )
-        .arg( QString( (b_remainingTime && cachedLength) ? "-" : "" ) )
-        .arg( QString( psz_time ) )
-        .arg( QString( ( !cachedLength && time ) ? "--:--" : psz_length ) );
-
-    setText( timestr );
+    vlc_tick_t time = vlc_tick_from_sec(pos * cachedLength);
+    setDisplayPosition( pos, time, cachedLength );
 }
-
 
 void TimeLabel::toggleTimeDisplay()
 {

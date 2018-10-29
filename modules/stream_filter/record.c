@@ -54,11 +54,11 @@ vlc_module_end()
 /*****************************************************************************
  *
  *****************************************************************************/
-struct stream_sys_t
+typedef struct
 {
     FILE *f;        /* TODO it could be replaced by access_output_t one day */
     bool b_error;
-};
+} stream_sys_t;
 
 
 /****************************************************************************
@@ -80,6 +80,9 @@ static int Open ( vlc_object_t *p_this )
     stream_t *s = (stream_t*)p_this;
     stream_sys_t *p_sys;
 
+    if( s->s->pf_readdir != NULL )
+        return VLC_EGENERIC;
+
     /* */
     s->p_sys = p_sys = malloc( sizeof( *p_sys ) );
     if( !p_sys )
@@ -91,7 +94,6 @@ static int Open ( vlc_object_t *p_this )
     s->pf_read = Read;
     s->pf_seek = Seek;
     s->pf_control = Control;
-    stream_FilterSetDefaultReadDir( s );
 
     return VLC_SUCCESS;
 }
@@ -178,7 +180,8 @@ static int Start( stream_t *s, const char *psz_extension )
 
     /* Create file name
      * TODO allow prefix configuration */
-    psz_file = input_CreateFilename( s->p_input, psz_path, INPUT_RECORD_PREFIX, psz_extension );
+    psz_file = input_CreateFilename( NULL, s->p_input_item, psz_path,
+                                     INPUT_RECORD_PREFIX, psz_extension );
 
     free( psz_path );
 

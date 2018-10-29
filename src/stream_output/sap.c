@@ -79,7 +79,7 @@ static vlc_mutex_t sap_mutex = VLC_STATIC_MUTEX;
 #define MIN_INTERVAL 2
 #define MAX_INTERVAL 300
 
-static void *RunThread (void *);
+noreturn static void *RunThread (void *);
 
 static sap_address_t *AddressCreate (vlc_object_t *obj, const char *group)
 {
@@ -142,18 +142,18 @@ noreturn static void *RunThread (void *self)
     for (;;)
     {
         session_descriptor_t *p_session;
-        mtime_t deadline;
+        vlc_tick_t deadline;
 
         while (addr->first == NULL)
             vlc_cond_wait (&addr->wait, &addr->lock);
 
         assert (addr->session_count > 0);
 
-        deadline = mdate ();
+        deadline = vlc_tick_now ();
         for (p_session = addr->first; p_session; p_session = p_session->next)
         {
             send (addr->fd, p_session->data, p_session->length, 0);
-            deadline += addr->interval * CLOCK_FREQ / addr->session_count;
+            deadline += vlc_tick_from_samples(addr->interval, addr->session_count);
 
             if (vlc_cond_timedwait (&addr->wait, &addr->lock, deadline) == 0)
                 break; /* list may have changed! */
@@ -192,13 +192,13 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
 
     if (vlc_getaddrinfo (dst, 0, NULL, &res) == 0)
     {
-        if (res->ai_addrlen <= sizeof (addr))
+        if ((size_t)res->ai_addrlen <= sizeof (addr))
             memcpy (&addr, res->ai_addr, res->ai_addrlen);
         addrlen = res->ai_addrlen;
         freeaddrinfo (res);
     }
 
-    if (addrlen == 0 || addrlen > sizeof (addr))
+    if (addrlen == 0 || (size_t)addrlen > sizeof (addr))
     {
         msg_Err (obj, "No/invalid address specified for SAP announce" );
         return NULL;
@@ -260,8 +260,8 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
         }
 
         default:
-            msg_Err (obj, "Address family %d not supported by SAP",
-                     addr.a.sa_family);
+            msg_Err (obj, "Address family %u not supported by SAP",
+                     (unsigned)addr.a.sa_family);
             return NULL;
     }
 
@@ -317,7 +317,7 @@ sout_AnnounceRegisterSDP (vlc_object_t *obj, const char *sdp,
 #endif
     vlc_memstream_putc(&stream, flags);
     vlc_memstream_putc(&stream, 0x00); /* No authentication length */
-    vlc_memstream_write(&stream, &(uint16_t){ mdate() }, 2); /* ID hash */
+    vlc_memstream_write(&stream, &(uint16_t){ vlc_tick_now() }, 2); /* ID hash */
 
     switch (sap_addr->orig.ss_family)
     {

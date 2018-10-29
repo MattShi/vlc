@@ -111,7 +111,7 @@
  *****************************************************************************/
 #define MAX_LINE 1024
 
-struct demux_sys_t
+typedef struct
 {
     char        *psz_uri;       /* Stream= or sgiQTFileBegin rtsp link */
     char        *psz_server;    /* sgiNameServerHost= */
@@ -122,12 +122,12 @@ struct demux_sys_t
     char        *psz_mcast_ip;  /* sgiMulticastAddress= */
     int         i_mcast_port;   /* sgiMulticastPort= */
     int         i_packet_size;  /* sgiPacketSize= */
-    mtime_t     i_duration;     /* sgiDuration= */
+    vlc_tick_t  i_duration;     /* sgiDuration= */
     int         i_port;         /* sgiRtspPort= */
     int         i_sid;          /* sgiSid= */
     bool  b_concert;      /* DeliveryService=cds */
     bool  b_rtsp_kasenna; /* kasenna style RTSP */
-};
+} demux_sys_t;
 
 static int ReadDir( stream_t *, input_item_node_t * );
 
@@ -294,7 +294,7 @@ static int ParseLine ( stream_t *p_demux, char *psz_line )
     else if( !strncasecmp( psz_bol, "sgiDuration=", sizeof("sgiDuration=") - 1 ) )
     {
         psz_bol += sizeof("sgiDuration=") - 1;
-        p_sys->i_duration = (mtime_t) strtol( psz_bol, NULL, 0 );
+        p_sys->i_duration = VLC_TICK_FROM_US( strtol( psz_bol, NULL, 0 ) );
     }
     else if( !strncasecmp( psz_bol, "sgiRtspPort=", sizeof("sgiRtspPort=") - 1 ) )
     {

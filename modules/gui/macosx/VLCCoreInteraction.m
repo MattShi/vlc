@@ -1,7 +1,7 @@
 /*****************************************************************************
  * CoreInteraction.m: MacOS X interface module
  *****************************************************************************
- * Copyright (C) 2011-2015 Felix Paul Kühne
+ * Copyright (C) 2011-2018 Felix Paul Kühne
  * $Id$
  *
  * Authors: Felix Paul Kühne <fkuehne -at- videolan -dot- org>
@@ -29,6 +29,7 @@
 #import <vlc_playlist.h>
 #import <vlc_input.h>
 #import <vlc_actions.h>
+#import <vlc_aout.h>
 #import <vlc_vout.h>
 #import <vlc_vout_osd.h>
 #import <vlc/vlc.h>
@@ -59,7 +60,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 @interface VLCCoreInteraction ()
 {
     int i_currentPlaybackRate;
-    mtime_t timeA, timeB;
+    vlc_tick_t timeA, timeB;
 
     float f_maxVolume;
 
@@ -102,31 +103,43 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
         b_mediaKeySupport = var_InheritBool(p_intf, "macosx-mediakeys");
         if (b_mediaKeySupport) {
             _mediaKeyController = [[SPMediaKeyTap alloc] initWithDelegate:self];
-            [[NSUserDefaults standardUserDefaults] registerDefaults:[NSDictionary dictionaryWithObjectsAndKeys:
-                                                                     [SPMediaKeyTap defaultMediaKeyUserBundleIdentifiers], kMediaKeyUsingBundleIdentifiersDefaultsKey,
-                                                                     nil]];
         }
-        [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(coreChangedMediaKeySupportSetting:) name:VLCMediaKeySupportSettingChangedNotification object: nil];
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(coreChangedMediaKeySupportSetting:)
+                                                     name:VLCMediaKeySupportSettingChangedNotification
+                                                   object:nil];
 
         /* init Apple Remote support */
         _remote = [[AppleRemote alloc] init];
         [_remote setClickCountEnabledButtons: kRemoteButtonPlay];
         [_remote setDelegate: self];
 
-        var_AddCallback(p_intf->obj.libvlc, "intf-boss", BossCallback, (__bridge void *)self);
+        var_AddCallback(pl_Get(p_intf), "intf-boss", BossCallback, (__bridge void *)self);
     }
     return self;
 }
 
 - (void)dealloc
 {
+    #warning BUG! This class is a singleton, so dealloc is never called!
+    // Dealloc is never called, which not only means the below code is never
+    // run, but it means that the SPMediaKeyTap object and the AppleRemote object
+    // is not deallocated properly either.
+
     intf_thread_t *p_intf = getIntf();
-    var_DelCallback(p_intf->obj.libvlc, "intf-boss", BossCallback, (__bridge void *)self);
+    var_DelCallback(pl_Get(p_intf), "intf-boss", BossCallback, (__bridge void *)self);
     [[NSNotificationCenter defaultCenter] removeObserver: self];
 }
 
 
 #pragma mark - Playback Controls
+
+- (void)play
+{
+    playlist_t *p_playlist = pl_Get(getIntf());
+
+    playlist_Play(p_playlist);
+}
 
 - (void)playOrPause
 {
@@ -139,7 +152,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
     } else {
         PLRootType root = [[[[VLCMain sharedInstance] playlist] model] currentRootType];
-        if ([[[VLCMain sharedInstance] playlist] isSelectionEmpty] && (root == ROOT_TYPE_PLAYLIST || root == ROOT_TYPE_MEDIALIBRARY))
+        if ([[[VLCMain sharedInstance] playlist] isSelectionEmpty] && (root == ROOT_TYPE_PLAYLIST))
             [[[VLCMain sharedInstance] open] openFileGeneric];
         else
             [[[VLCMain sharedInstance] playlist] playItem:nil];
@@ -240,21 +253,21 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     playlist_Next(pl_Get(getIntf()));
 }
 
-- (int)durationOfCurrentPlaylistItem
+- (NSInteger)durationOfCurrentPlaylistItem
 {
     intf_thread_t *p_intf = getIntf();
     if (!p_intf)
         return 0;
 
     input_thread_t * p_input = pl_CurrentInput(p_intf);
-    int64_t i_duration = -1;
+    vlc_tick_t i_duration;
     if (!p_input)
-        return i_duration;
+        return -1;
 
-    input_Control(p_input, INPUT_GET_LENGTH, &i_duration);
+    i_duration = var_GetInteger(p_input, "length");
     vlc_object_release(p_input);
 
-    return (int)(i_duration / 1000000);
+    return SEC_FROM_VLC_TICK(i_duration);
 }
 
 - (NSURL*)URLOfCurrentPlaylistItem
@@ -312,7 +325,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     NSString *o_name = @"";
     char *format = var_InheritString(getIntf(), "input-title-format");
     if (format) {
-        char *formated = vlc_strfinput(p_input, format);
+        char *formated = vlc_strfinput(p_input, NULL, format);
         free(format);
         o_name = toNSStr(formated);
         free(formated);
@@ -349,9 +362,9 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     if (!p_input)
         return;
 
-    int i_interval = var_InheritInteger( p_input, p_value );
+    int64_t i_interval = var_InheritInteger( p_input, p_value );
     if (i_interval > 0) {
-        mtime_t val = CLOCK_FREQ * i_interval;
+        vlc_tick_t val = vlc_tick_from_sec( i_interval );
         if (!b_value)
             val = val * -1;
         var_SetInteger( p_input, "time-offset", val );
@@ -417,7 +430,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
             vout_OSDMessage(p_vout, VOUT_SPU_CHANNEL_OSD, "%s", _("Random On"));
             vlc_object_release(p_vout);
         }
-        config_PutInt(p_playlist, "random", 1);
+        config_PutInt("random", 1);
     }
     else
     {
@@ -425,7 +438,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
             vout_OSDMessage(p_vout, VOUT_SPU_CHANNEL_OSD, "%s", _("Random Off"));
             vlc_object_release(p_vout);
         }
-        config_PutInt(p_playlist, "random", 0);
+        config_PutInt("random", 0);
     }
 }
 
@@ -439,8 +452,8 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
     var_SetBool(p_playlist, "repeat", NO);
     var_SetBool(p_playlist, "loop", YES);
-    config_PutInt(p_playlist, "repeat", NO);
-    config_PutInt(p_playlist, "loop", YES);
+    config_PutInt("repeat", NO);
+    config_PutInt("loop", YES);
 
     vout_thread_t *p_vout = getVout();
     if (p_vout) {
@@ -459,8 +472,8 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
     var_SetBool(p_playlist, "repeat", YES);
     var_SetBool(p_playlist, "loop", NO);
-    config_PutInt(p_playlist, "repeat", YES);
-    config_PutInt(p_playlist, "loop", NO);
+    config_PutInt("repeat", YES);
+    config_PutInt("loop", NO);
 
     vout_thread_t *p_vout = getVout();
     if (p_vout) {
@@ -479,8 +492,8 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
     var_SetBool(p_playlist, "repeat", NO);
     var_SetBool(p_playlist, "loop", NO);
-    config_PutInt(p_playlist, "repeat", NO);
-    config_PutInt(p_playlist, "loop", NO);
+    config_PutInt("repeat", NO);
+    config_PutInt("loop", NO);
 
     vout_thread_t *p_vout = getVout();
     if (p_vout) {
@@ -494,12 +507,16 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     if (!timeA) {
         input_thread_t * p_input = pl_CurrentInput(getIntf());
         if (p_input) {
+            msg_Dbg(getIntf(), "Setting A value");
+
             timeA = var_GetInteger(p_input, "time");
             vlc_object_release(p_input);
         }
     } else if (!timeB) {
         input_thread_t * p_input = pl_CurrentInput(getIntf());
         if (p_input) {
+            msg_Dbg(getIntf(), "Setting B value");
+
             timeB = var_GetInteger(p_input, "time");
             vlc_object_release(p_input);
         }
@@ -509,6 +526,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
 - (void)resetAtoB
 {
+    msg_Dbg(getIntf(), "Resetting A to B values");
     timeA = 0;
     timeB = 0;
 }
@@ -518,11 +536,20 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     if (timeB) {
         input_thread_t * p_input = pl_CurrentInput(getIntf());
         if (p_input) {
-            mtime_t currentTime = var_GetInteger(p_input, "time");
+            vlc_tick_t currentTime = var_GetInteger(p_input, "time");
             if ( currentTime >= timeB || currentTime < timeA)
                 var_SetInteger(p_input, "time", timeA);
             vlc_object_release(p_input);
         }
+    }
+}
+
+- (void)jumpToTime:(vlc_tick_t)time
+{
+    input_thread_t * p_input = pl_CurrentInput(getIntf());
+    if (p_input) {
+        var_SetInteger(p_input, "time", time);
+        vlc_object_release(p_input);
     }
 }
 
@@ -573,7 +600,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
     float volume = playlist_VolumeGet(pl_Get(p_intf));
 
-    return lroundf(volume * AOUT_VOLUME_DEFAULT);
+    return (int)lroundf(volume * AOUT_VOLUME_DEFAULT);
 }
 
 - (void)setVolume: (int)i_value
@@ -651,12 +678,12 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 
 - (void)setAspectRatioIsLocked:(BOOL)b_value
 {
-    config_PutInt(getIntf(), "macosx-lock-aspect-ratio", b_value);
+    config_PutInt("macosx-lock-aspect-ratio", b_value);
 }
 
 - (BOOL)aspectRatioIsLocked
 {
-    return config_GetInt(getIntf(), "macosx-lock-aspect-ratio");
+    return config_GetInt("macosx-lock-aspect-ratio");
 }
 
 - (void)toggleFullscreen
@@ -672,7 +699,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
         vlc_object_release(p_vout);
     } else { // e.g. lion fullscreen toggle
         BOOL b_fs = var_ToggleBool(pl_Get(p_intf), "fullscreen");
-        [[[VLCMain sharedInstance] voutController] setFullscreen:b_fs forWindow:nil withAnimation:YES];
+        [[[VLCMain sharedInstance] voutProvider] setFullscreen:b_fs forWindow:nil withAnimation:YES];
     }
 }
 
@@ -686,7 +713,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     BOOL b_needsRestart = NO;
 
     #define fixpref(pref) \
-    o_workString = [[NSMutableString alloc] initWithFormat:@"%s", config_GetPsz(getIntf(), pref)]; \
+    o_workString = [[NSMutableString alloc] initWithFormat:@"%s", config_GetPsz(pref)]; \
     if ([o_workString length] > 0) \
     { \
         returnedRange = [o_workString rangeOfString:@"macosx" options: NSCaseInsensitiveSearch]; \
@@ -699,7 +726,7 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
             fullRange = NSMakeRange(0, [o_workString length]); \
             [o_workString replaceOccurrencesOfString:@"macosx:" withString:@"" options: NSCaseInsensitiveSearch range: fullRange]; \
             \
-            config_PutPsz(getIntf(), pref, [o_workString UTF8String]); \
+            config_PutPsz(pref, [o_workString UTF8String]); \
             b_needsRestart = YES; \
         } \
     }
@@ -803,9 +830,11 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
 {
     NSArray<NSValue *> *vouts = getVouts();
     intf_thread_t *p_intf = getIntf();
-    playlist_t *p_playlist = pl_Get(p_intf);
     if (!p_intf)
         return;
+
+    playlist_t *p_playlist = pl_Get(p_intf);
+
     int i_type = 0;
     bool b_is_command = false;
     char const *psz_filter_type = [self getFilterType: psz_filter];
@@ -879,14 +908,18 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
     if (b_mediaKeySupport && ([[[main playlist] model] hasChildren] ||
                               [[main inputManager] hasInput])) {
         if (!b_mediaKeyTrapEnabled) {
-            b_mediaKeyTrapEnabled = YES;
-            msg_Dbg(p_intf, "Enable media key support");
-            [_mediaKeyController startWatchingMediaKeys];
+            msg_Dbg(p_intf, "Enabling media key support");
+            if ([_mediaKeyController startWatchingMediaKeys]) {
+                b_mediaKeyTrapEnabled = YES;
+            } else {
+                msg_Warn(p_intf, "Failed to enable media key support, likely "
+                    "app needs to be whitelisted in Security Settings.");
+            }
         }
     } else {
         if (b_mediaKeyTrapEnabled) {
             b_mediaKeyTrapEnabled = NO;
-            msg_Dbg(p_intf, "Disable media key support");
+            msg_Dbg(p_intf, "Disabling media key support");
             [_mediaKeyController stopWatchingMediaKeys];
         }
     }
@@ -1052,27 +1085,27 @@ static int BossCallback(vlc_object_t *p_this, const char *psz_var,
                 [self playOrPause];
             break;
         case kRemoteButtonVolume_Plus:
-            if (config_GetInt(getIntf(), "macosx-appleremote-sysvol"))
+            if (config_GetInt("macosx-appleremote-sysvol"))
                 [NSSound increaseSystemVolume];
             else
                 if (p_intf)
                     var_SetInteger(p_intf->obj.libvlc, "key-action", ACTIONID_VOL_UP);
             break;
         case kRemoteButtonVolume_Minus:
-            if (config_GetInt(getIntf(), "macosx-appleremote-sysvol"))
+            if (config_GetInt("macosx-appleremote-sysvol"))
                 [NSSound decreaseSystemVolume];
             else
                 if (p_intf)
                     var_SetInteger(p_intf->obj.libvlc, "key-action", ACTIONID_VOL_DOWN);
             break;
         case kRemoteButtonRight:
-            if (config_GetInt(getIntf(), "macosx-appleremote-prevnext"))
+            if (config_GetInt("macosx-appleremote-prevnext"))
                 [self forward];
             else
                 [self next];
             break;
         case kRemoteButtonLeft:
-            if (config_GetInt(getIntf(), "macosx-appleremote-prevnext"))
+            if (config_GetInt("macosx-appleremote-prevnext"))
                 [self backward];
             else
                 [self previous];

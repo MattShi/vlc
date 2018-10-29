@@ -100,7 +100,7 @@ void SegmentList::mergeWith(SegmentList *updated, bool b_restamp)
     updated->segments.clear();
 }
 
-void SegmentList::pruneByPlaybackTime(mtime_t time)
+void SegmentList::pruneByPlaybackTime(vlc_tick_t time)
 {
     uint64_t num;
     const Timescale timescale = inheritTimescale();
@@ -140,9 +140,9 @@ bool SegmentList::getSegmentNumberByScaledTime(stime_t time, uint64_t *ret) cons
 }
 
 bool SegmentList::getPlaybackTimeDurationBySegmentNumber(uint64_t number,
-                                                         mtime_t *time, mtime_t *dur) const
+                                                         vlc_tick_t *time, vlc_tick_t *dur) const
 {
-    *time = *dur = VLC_TS_INVALID;
+    *time = *dur = VLC_TICK_INVALID;
 
     if(segments.empty())
         return false;
@@ -178,7 +178,7 @@ bool SegmentList::getPlaybackTimeDurationBySegmentNumber(uint64_t number,
     if(!found)
         return false;
 
-    *time = VLC_TS_0 + timescale.ToTime(seg_start);
-    *dur = VLC_TS_0 + timescale.ToTime(seg_dura);
+    *time = VLC_TICK_0 + timescale.ToTime(seg_start);
+    *dur = VLC_TICK_0 + timescale.ToTime(seg_dura);
     return true;
 }

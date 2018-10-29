@@ -73,17 +73,17 @@ struct vod_media_t
     const char *psz_mux;
 
     /* Infos */
-    mtime_t i_length;
+    vlc_tick_t i_length;
 };
 
-struct vod_sys_t
+typedef struct
 {
     char *psz_rtsp_path;
 
     /* */
     vlc_thread_t thread;
     block_fifo_t *p_fifo_cmd;
-};
+} vod_sys_t;
 
 /* rtsp delayed command (to avoid deadlock between vlm/httpd) */
 typedef enum
@@ -341,7 +341,8 @@ static void CommandPush( vod_t *p_vod, rtsp_cmd_type_t i_type,
     p_cmd = block_Alloc( sizeof(rtsp_cmd_t) );
     memcpy( p_cmd->p_buffer, &cmd, sizeof(cmd) );
 
-    block_FifoPut( p_vod->p_sys->p_fifo_cmd, p_cmd );
+    vod_sys_t *p_sys = p_vod->p_sys;
+    block_FifoPut( p_sys->p_fifo_cmd, p_cmd );
 }
 
 static void* CommandThread( void *obj )
@@ -413,7 +414,7 @@ char *SDPGenerateVoD( const vod_media_t *p_media, const char *rtsp_url )
 
     if( p_media->i_length > 0 )
     {
-        lldiv_t d = lldiv( p_media->i_length / 1000, 1000 );
+        lldiv_t d = lldiv( MS_FROM_VLC_TICK(p_media->i_length), 1000 );
         sdp_AddAttribute( &sdp, "range"," npt=0-%lld.%03u", d.quot,
                           (unsigned)d.rem );
     }

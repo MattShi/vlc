@@ -42,6 +42,22 @@
 #include <vlc_input.h>
 #include <vlc_url.h>
 
+@interface VLCPLModel ()
+{
+    playlist_t *p_playlist;
+    __weak NSOutlineView *_outlineView;
+
+    NSUInteger _retainedRowSelection;
+}
+
+- (void)VLCPLItemAppended:(NSArray *)valueArray;
+- (void)VLCPLItemRemoved:(NSNumber *)value;
+- (void)VLCPLItemUpdated;
+
+@end
+
+#pragma mark -
+
 static int VLCPLItemUpdated(vlc_object_t *p_this, const char *psz_var,
                          vlc_value_t oldval, vlc_value_t new_val, void *param)
 {
@@ -104,15 +120,6 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
 }
 
 #pragma mark -
-
-@interface VLCPLModel ()
-{
-    playlist_t *p_playlist;
-    __weak NSOutlineView *_outlineView;
-
-    NSUInteger _retainedRowSelection;
-}
-@end
 
 @implementation VLCPLModel
 
@@ -178,16 +185,13 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
     int i_root_id = [_rootItem plItemId];
     if (i_root_id == p_playlist->p_playing->i_id)
         return ROOT_TYPE_PLAYLIST;
-    if (p_playlist->p_media_library && i_root_id == p_playlist->p_media_library->i_id)
-        return ROOT_TYPE_MEDIALIBRARY;
 
     return ROOT_TYPE_OTHER;
 }
 
 - (BOOL)editAllowed
 {
-    return [self currentRootType] == ROOT_TYPE_MEDIALIBRARY ||
-    [self currentRootType] == ROOT_TYPE_PLAYLIST;
+    return [self currentRootType] == ROOT_TYPE_PLAYLIST;
 }
 
 - (void)deleteSelectedItem
@@ -202,16 +206,16 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
         _retainedRowSelection = 0;
 
     [selectedIndexes enumerateIndexesUsingBlock:^(NSUInteger idx, BOOL *stop) {
-        VLCPLItem *item = [_outlineView itemAtRow: idx];
+        VLCPLItem *item = [self->_outlineView itemAtRow: idx];
         if (!item)
             return;
 
         // model deletion is done via callback
-        PL_LOCK;
-        playlist_item_t *p_root = playlist_ItemGetById(p_playlist, [item plItemId]);
+        playlist_Lock( self->p_playlist );
+        playlist_item_t *p_root = playlist_ItemGetById(self->p_playlist, [item plItemId]);
         if( p_root != NULL )
-            playlist_NodeDelete(p_playlist, p_root);
-        PL_UNLOCK;
+            playlist_NodeDelete(self->p_playlist, p_root);
+        playlist_Unlock( self->p_playlist );
     }];
 }
 
@@ -518,9 +522,9 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
 
     } else if ([o_identifier isEqualToString:DURATION_COLUMN]) {
         char psz_duration[MSTRTIME_MAX_SIZE];
-        mtime_t dur = input_item_GetDuration(p_input);
+        vlc_tick_t dur = input_item_GetDuration(p_input);
         if (dur != -1) {
-            secstotimestr(psz_duration, dur/1000000);
+            secstotimestr(psz_duration, (int32_t)SEC_FROM_VLC_TICK(dur));
             o_value = toNSStr(psz_duration);
         }
         else
@@ -604,7 +608,6 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
 
 - (BOOL)outlineView:(NSOutlineView *)outlineView writeItems:(NSArray *)items toPasteboard:(NSPasteboard *)pboard
 {
-    NSUInteger itemCount = [items count];
     _draggedItems = [[NSMutableArray alloc] initWithArray:items];
 
     /* Add the data to the pasteboard object. */
@@ -686,11 +689,12 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
         playlist_item_t *p_new_parent = playlist_ItemGetById(p_playlist, [targetItem plItemId]);
         if (!p_new_parent) {
             PL_UNLOCK;
+            free(pp_items);
             return NO;
         }
 
-        NSUInteger j = 0;
-        for (NSUInteger i = 0; i < count; i++) {
+        int j = 0;
+        for (int i = 0; i < count; i++) {
             playlist_item_t *p_item = playlist_ItemGetById(p_playlist, [[o_filteredItems objectAtIndex:i] plItemId]);
             if (p_item)
                 pp_items[j++] = p_item;
@@ -700,7 +704,7 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
         if (index == NSOutlineViewDropOnItemIndex)
             index = p_new_parent->i_children;
 
-        if (playlist_TreeMoveMany(p_playlist, j, pp_items, p_new_parent, index) != VLC_SUCCESS) {
+        if (playlist_TreeMoveMany(p_playlist, j, pp_items, p_new_parent, (int)index) != VLC_SUCCESS) {
             PL_UNLOCK;
             free(pp_items);
             return NO;
@@ -709,14 +713,19 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
         PL_UNLOCK;
         free(pp_items);
 
+        // FIXME: Fix below code to avoid rebuilding the whole model
         // rebuild our model
-        NSUInteger filteredItemsCount = [o_filteredItems count];
-        for(NSUInteger i = 0; i < filteredItemsCount; ++i) {
-            VLCPLItem *o_item = [o_filteredItems objectAtIndex:i];
-            NSLog(@"delete child from parent %p", [o_item parent]);
-            [[o_item parent] deleteChild:o_item];
-            [targetItem addChild:o_item atPos:index + i];
-        }
+//        NSUInteger filteredItemsCount = [o_filteredItems count];
+//        for(int i = 0; i < filteredItemsCount; ++i) {
+//            VLCPLItem *o_item = [o_filteredItems objectAtIndex:i];
+//            NSLog(@"delete child from parent %p", [o_item parent]);
+//            [[o_item parent] deleteChild:o_item];
+//            [targetItem addChild:o_item atPos:(int)index + i];
+//        }
+
+        PL_LOCK;
+        [self rebuildVLCPLItem:_rootItem];
+        PL_UNLOCK;
 
         [_outlineView reloadData];
 
@@ -748,7 +757,7 @@ static int VolumeUpdated(vlc_object_t *p_this, const char *psz_var,
 
     [[[VLCMain sharedInstance] playlist] addPlaylistItems:items
                                          withParentItemId:[targetItem plItemId]
-                                                    atPos:index
+                                                    atPos:(int)index
                                             startPlayback:NO];
     return YES;
 }

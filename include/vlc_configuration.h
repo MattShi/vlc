@@ -64,10 +64,8 @@ typedef union
     float       f;
 } module_value_t;
 
-typedef int (*vlc_string_list_cb)(vlc_object_t *, const char *,
-                                  char ***, char ***);
-typedef int (*vlc_integer_list_cb)(vlc_object_t *, const char *,
-                                   int64_t **, char ***);
+typedef int (*vlc_string_list_cb)(const char *, char ***, char ***);
+typedef int (*vlc_integer_list_cb)(const char *, int64_t **, char ***);
 
 /**
  * Configuration item
@@ -79,7 +77,6 @@ struct module_config_t
 {
     uint8_t     i_type; /**< Configuration type */
     char        i_short; /**< Optional short option name */
-    unsigned    b_advanced:1; /**< Advanced option */
     unsigned    b_internal:1; /**< Hidden from preferences and help */
     unsigned    b_unsaveable:1; /**< Not stored in configuration */
     unsigned    b_safe:1; /**< Safe for web plugins and playlist files */
@@ -131,7 +128,7 @@ VLC_API int config_GetType(const char *name) VLC_USED;
  * \return The configuration item value or -1 if not found.
  * \bug A legitimate integer value of -1 cannot be distinguished from an error.
  */
-VLC_API int64_t config_GetInt(vlc_object_t *, const char *) VLC_USED;
+VLC_API int64_t config_GetInt(const char *name) VLC_USED;
 
 /**
  * Sets an integer configuration item.
@@ -148,7 +145,7 @@ VLC_API int64_t config_GetInt(vlc_object_t *, const char *) VLC_USED;
  * \param name Configuration item name
  * \param val New value
  */
-VLC_API void config_PutInt(vlc_object_t *, const char *name, int64_t val);
+VLC_API void config_PutInt(const char *name, int64_t val);
 
 /**
  * Gets an floating point configuration item.
@@ -164,7 +161,7 @@ VLC_API void config_PutInt(vlc_object_t *, const char *name, int64_t val);
  * \bug A legitimate floating point value of -1 cannot be distinguished from an
  * error.
  */
-VLC_API float config_GetFloat(vlc_object_t *, const char *name) VLC_USED;
+VLC_API float config_GetFloat(const char *name) VLC_USED;
 
 /**
  * Sets an integer configuration item.
@@ -181,7 +178,7 @@ VLC_API float config_GetFloat(vlc_object_t *, const char *name) VLC_USED;
  * \param name Configuration item name
  * \param val New value
  */
-VLC_API void config_PutFloat(vlc_object_t *, const char *name, float val);
+VLC_API void config_PutFloat(const char *name, float val);
 
 /**
  * Gets an string configuration item.
@@ -203,8 +200,7 @@ VLC_API void config_PutFloat(vlc_object_t *, const char *name, float val);
  * or if an error occurs, NULL is returned.
  * \bug The empty string value cannot be distinguished from an error.
  */
-VLC_API char * config_GetPsz(vlc_object_t *, const char *name)
-VLC_USED VLC_MALLOC;
+VLC_API char *config_GetPsz(const char *name) VLC_USED VLC_MALLOC;
 
 /**
  * Sets an string configuration item.
@@ -222,7 +218,7 @@ VLC_USED VLC_MALLOC;
  * \param val New value (will be copied)
  * \bug This function allocates memory but errors cannot be detected.
  */
-VLC_API void config_PutPsz(vlc_object_t *, const char *name, const char *val);
+VLC_API void config_PutPsz(const char *name, const char *val);
 
 /**
  * Enumerates integer configuration choices.
@@ -234,8 +230,8 @@ VLC_API void config_PutPsz(vlc_object_t *, const char *name, const char *val);
  * \note the caller is responsible for calling free() on all descriptions and
  * on both tables. In case of error, both pointers are set to NULL.
  */
-VLC_API ssize_t config_GetIntChoices(vlc_object_t *, const char *,
-                                     int64_t **, char ***) VLC_USED;
+VLC_API ssize_t config_GetIntChoices(const char *, int64_t **values,
+                                     char ***texts) VLC_USED;
 
 /**
  * Determines a list of suggested values for a string configuration item.
@@ -246,8 +242,8 @@ VLC_API ssize_t config_GetIntChoices(vlc_object_t *, const char *,
  * descriptions and on both tables.
  * In case of error, both pointers are set to NULL.
  */
-VLC_API ssize_t config_GetPszChoices(vlc_object_t *, const char *,
-                                     char ***, char ***) VLC_USED;
+VLC_API ssize_t config_GetPszChoices(const char *,
+                                     char ***values, char ***texts) VLC_USED;
 
 VLC_API int config_SaveConfigFile( vlc_object_t * );
 #define config_SaveConfigFile(a) config_SaveConfigFile(VLC_OBJECT(a))
@@ -258,8 +254,7 @@ VLC_API int config_SaveConfigFile( vlc_object_t * );
  * This function resets all configuration items to their respective
  * compile-time default value.
  */
-VLC_API void config_ResetAll( vlc_object_t * );
-#define config_ResetAll(a) config_ResetAll(VLC_OBJECT(a))
+VLC_API void config_ResetAll(void);
 
 /**
  * Looks up a configuration item.
@@ -274,38 +269,47 @@ VLC_API void config_ResetAll( vlc_object_t * );
 VLC_API module_config_t *config_FindConfig(const char *name) VLC_USED;
 
 /**
- * Gets the arch-independent installation directory.
- *
- * This function determines the directory containing the
- * architecture-independent installed asset files (such as image, text and
- * message translation tables).
- *
- * See also config_GetLibDir().
- *
- * @return a heap-allocated string (use free() to release it), or NULL on error
+ * System directory identifiers
  */
-VLC_API char *config_GetDataDir(void) VLC_USED VLC_MALLOC;
+typedef enum vlc_system_dir
+{
+    VLC_PKG_DATA_DIR, /**< Package-specific architecture-independent read-only
+                           data directory (e.g. /usr/local/data/vlc). */
+    VLC_PKG_LIB_DIR, /**< Package-specific architecture-dependent read-only
+                          data directory (e.g. /usr/local/lib/vlc). */
+    VLC_PKG_LIBEXEC_DIR, /**< Package-specific executable read-only directory
+                              (e.g. /usr/local/libexec/vlc). */
+    VLC_PKG_INCLUDE_DIR_RESERVED,
+    VLC_SYSDATA_DIR, /**< Global architecture-independent read-only
+                          data directory (e.g. /usr/local/data).
+                          Available only on some platforms. */
+    VLC_LIB_DIR, /**< Global architecture-dependent read-only directory
+                      (e.g. /usr/local/lib). */
+    VLC_LIBEXEC_DIR, /**< Global executable read-only directory
+                          (e.g. /usr/local/libexec). */
+    VLC_INCLUDE_DIR_RESERVED,
+    VLC_LOCALE_DIR, /**< Base directory for package read-only locale data. */
+} vlc_sysdir_t;
 
 /**
- * Gets the arch-specific installation directory.
+ * Gets an installation directory.
  *
- * This function determines the directory containing the architecture-specific
- * installed asset files (such as executable plugins and compiled byte code).
+ * This function determines one of the installation directory.
  *
- * See also config_GetDataDir().
- *
- * \note config_GetDataDir() and config_GetLibDir() may or may not return the
- * same path, depending on conventions of the operating system.
+ * @param dir identifier of the directory (see \ref vlc_sysdir_t)
+ * @param filename name of a file or other object within the directory
+ *                 (or NULL to obtain the plain directory)
  *
  * @return a heap-allocated string (use free() to release it), or NULL on error
  */
-VLC_API char *config_GetLibDir(void) VLC_USED VLC_MALLOC;
+VLC_API char *config_GetSysPath(vlc_sysdir_t dir, const char *filename)
+VLC_USED VLC_MALLOC;
 
-typedef enum vlc_userdir
+typedef enum vlc_user_dir
 {
     VLC_HOME_DIR, /* User's home */
     VLC_CONFIG_DIR, /* VLC-specific configuration directory */
-    VLC_DATA_DIR, /* VLC-specific data directory */
+    VLC_USERDATA_DIR, /* VLC-specific data directory */
     VLC_CACHE_DIR, /* VLC-specific user cached data directory */
     /* Generic directories (same as XDG) */
     VLC_DESKTOP_DIR=0x80,
@@ -320,20 +324,9 @@ typedef enum vlc_userdir
 
 VLC_API char * config_GetUserDir( vlc_userdir_t ) VLC_USED VLC_MALLOC;
 
-VLC_API void config_AddIntf( vlc_object_t *, const char * );
-VLC_API void config_RemoveIntf( vlc_object_t *, const char * );
-VLC_API bool config_ExistIntf( vlc_object_t *, const char * ) VLC_USED;
-
-#define config_GetInt(a,b) config_GetInt(VLC_OBJECT(a),b)
-#define config_PutInt(a,b,c) config_PutInt(VLC_OBJECT(a),b,c)
-#define config_GetFloat(a,b) config_GetFloat(VLC_OBJECT(a),b)
-#define config_PutFloat(a,b,c) config_PutFloat(VLC_OBJECT(a),b,c)
-#define config_GetPsz(a,b) config_GetPsz(VLC_OBJECT(a),b)
-#define config_PutPsz(a,b,c) config_PutPsz(VLC_OBJECT(a),b,c)
-
-#define config_AddIntf(a,b) config_AddIntf(VLC_OBJECT(a),b)
-#define config_RemoveIntf(a,b) config_RemoveIntf(VLC_OBJECT(a),b)
-#define config_ExistIntf(a,b) config_ExistIntf(VLC_OBJECT(a),b)
+VLC_API void config_AddIntf(const char *);
+VLC_API void config_RemoveIntf(const char *);
+VLC_API bool config_ExistIntf(const char *) VLC_USED;
 
 /****************************************************************************
  * config_chain_t:

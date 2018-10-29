@@ -89,17 +89,27 @@ static int CorksCallback( vlc_object_t *obj, char const *var,
     if( !var_InheritBool( obj, "playlist-cork" ) )
         return VLC_SUCCESS;
 
+    playlist_Lock(pl);
+
     if( cur.i_int )
     {
-        msg_Dbg( obj, "corked" );
-        playlist_Pause( pl );
+        bool effective = playlist_Status(pl) == PLAYLIST_RUNNING;
+
+        msg_Dbg(obj, "corked (%seffective)", effective ? "" : "in");
+        pl_priv(pl)->cork_effective = effective;
+        playlist_Control(pl, PLAYLIST_PAUSE, pl_Locked);
     }
     else
     {
-        msg_Dbg( obj, "uncorked" );
-        playlist_Resume( pl );
+        bool effective = pl_priv(pl)->cork_effective;
+
+        msg_Dbg(obj, "uncorked (%seffective)", effective ? "" : "in");
+
+        if (effective)
+            playlist_Control(pl, PLAYLIST_RESUME, pl_Locked);
     }
 
+    playlist_Unlock(pl);
     (void) var; (void) dummy;
     return VLC_SUCCESS;
 }
@@ -169,7 +179,7 @@ static int VideoSplitterCallback( vlc_object_t *p_this, char const *psz_cmd,
     if( p_input )
     {
         const double f_position = var_GetFloat( p_input, "position" );
-        input_Control( p_input, INPUT_RESTART_ES, -VIDEO_ES );
+        input_Control( p_input, INPUT_RESTART_ES_BY_ID, -VIDEO_ES );
         var_SetFloat( p_input, "position", f_position );
     }
 
@@ -199,7 +209,7 @@ playlist_t *playlist_Create( vlc_object_t *p_parent )
     p->input_tree = NULL;
     p->id_tree = NULL;
 
-    TAB_INIT( pl_priv(p_playlist)->i_sds, pl_priv(p_playlist)->pp_sds );
+    vlc_list_init(&p->sds);
 
     VariablesInit( p_playlist );
     vlc_mutex_init( &p->lock );
@@ -226,35 +236,25 @@ playlist_t *playlist_Create( vlc_object_t *p_parent )
     p_playlist->root.i_id = 0;
     p_playlist->root.i_flags = 0;
 
-    /* Create the root, playing items and meida library nodes */
-    playlist_item_t *playing, *ml;
+    /* Create the root, playing items nodes */
+    playlist_item_t *playing;
 
     PL_LOCK;
     playing = playlist_NodeCreate( p_playlist, _( "Playlist" ),
                                    &p_playlist->root, PLAYLIST_END,
                                    PLAYLIST_RO_FLAG|PLAYLIST_NO_INHERIT_FLAG );
-    if( var_InheritBool( p_parent, "media-library") )
-        ml = playlist_NodeCreate( p_playlist, _( "Media Library" ),
-                                  &p_playlist->root, PLAYLIST_END,
-                                  PLAYLIST_RO_FLAG|PLAYLIST_NO_INHERIT_FLAG );
-    else
-        ml = NULL;
     PL_UNLOCK;
 
     if( unlikely(playing == NULL) )
         abort();
 
     p_playlist->p_playing = playing;
-    p_playlist->p_media_library = ml;
 
     /* Initial status */
     pl_priv(p_playlist)->status.p_item = NULL;
     pl_priv(p_playlist)->status.p_node = p_playlist->p_playing;
     pl_priv(p_playlist)->request.b_request = false;
     p->request.input_dead = false;
-
-    if (ml != NULL)
-        playlist_MLLoad( p_playlist );
 
     /* Input resources */
     p->p_input_resource = input_resource_New( VLC_OBJECT( p_playlist ) );
@@ -315,9 +315,6 @@ void playlist_Destroy( playlist_t *p_playlist )
     if( p_sys->p_renderer )
         vlc_renderer_item_release( p_sys->p_renderer );
 
-    if( p_playlist->p_media_library != NULL )
-        playlist_MLDump( p_playlist );
-
     PL_LOCK;
     /* Release the current node */
     set_current_status_node( p_playlist, NULL );
@@ -329,12 +326,6 @@ void playlist_Destroy( playlist_t *p_playlist )
     ARRAY_RESET( p_playlist->current );
 
     /* Remove all remaining items */
-    if( p_playlist->p_media_library != NULL )
-    {
-        playlist_NodeDeleteExplicit( p_playlist, p_playlist->p_media_library,
-            PLAYLIST_DELETE_FORCE );
-    }
-
     playlist_NodeDeleteExplicit( p_playlist, p_playlist->p_playing,
         PLAYLIST_DELETE_FORCE );
 
@@ -469,6 +460,20 @@ static void VariablesInit( playlist_t *p_playlist )
 
     var_Create( p_playlist, "sub-text-scale",
                VLC_VAR_INTEGER | VLC_VAR_DOINHERIT | VLC_VAR_ISCOMMAND );
+
+    /* Callbacks between interfaces */
+
+    /* Create a variable for showing the right click menu */
+    var_Create( p_playlist, "intf-popupmenu", VLC_VAR_BOOL );
+
+    /* Create a variable for showing the fullscreen interface */
+    var_Create( p_playlist, "intf-toggle-fscontrol", VLC_VAR_VOID );
+
+    /* Create a variable for the Boss Key */
+    var_Create( p_playlist, "intf-boss", VLC_VAR_VOID );
+
+    /* Create a variable for showing the main interface */
+    var_Create( p_playlist, "intf-show", VLC_VAR_VOID );
 }
 
 playlist_item_t * playlist_CurrentPlayingItem( playlist_t * p_playlist )

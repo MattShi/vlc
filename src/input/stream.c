@@ -27,6 +27,7 @@
 #endif
 
 #include <assert.h>
+#include <stdalign.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
@@ -58,21 +59,24 @@ typedef struct stream_priv_t
         unsigned char char_width;
         bool          little_endian;
     } text;
+
+    max_align_t private_data[];
 } stream_priv_t;
 
 /**
  * Allocates a VLC stream object
  */
-stream_t *vlc_stream_CommonNew(vlc_object_t *parent,
-                               void (*destroy)(stream_t *))
+stream_t *vlc_stream_CustomNew(vlc_object_t *parent,
+                               void (*destroy)(stream_t *), size_t size,
+                               const char *type_name)
 {
-    stream_priv_t *priv = vlc_custom_create(parent, sizeof (*priv), "stream");
+    stream_priv_t *priv = vlc_custom_create(parent, sizeof (*priv) + size,
+                                            type_name);
     if (unlikely(priv == NULL))
         return NULL;
 
     stream_t *s = &priv->stream;
 
-    s->p_module = NULL;
     s->psz_url = NULL;
     s->s = NULL;
     s->pf_read = NULL;
@@ -81,7 +85,7 @@ stream_t *vlc_stream_CommonNew(vlc_object_t *parent,
     s->pf_seek = NULL;
     s->pf_control = NULL;
     s->p_sys = NULL;
-    s->p_input = NULL;
+    s->p_input_item = NULL;
     assert(destroy != NULL);
     priv->destroy = destroy;
     priv->block = NULL;
@@ -95,6 +99,17 @@ stream_t *vlc_stream_CommonNew(vlc_object_t *parent,
     priv->text.little_endian = false;
 
     return s;
+}
+
+void *vlc_stream_Private(stream_t *stream)
+{
+    return ((stream_priv_t *)stream)->private_data;
+}
+
+stream_t *vlc_stream_CommonNew(vlc_object_t *parent,
+                               void (*destroy)(stream_t *))
+{
+    return vlc_stream_CustomNew(parent, destroy, 0, "stream");
 }
 
 void stream_CommonDelete(stream_t *s)
@@ -129,9 +144,11 @@ stream_t *(vlc_stream_NewURL)(vlc_object_t *p_parent, const char *psz_url)
     if( !psz_url )
         return NULL;
 
-    stream_t *s = stream_AccessNew( p_parent, NULL, false, psz_url );
+    stream_t *s = stream_AccessNew( p_parent, NULL, NULL, false, psz_url );
     if( s == NULL )
         msg_Err( p_parent, "no suitable access module for `%s'", psz_url );
+    else
+        s = stream_FilterAutoNew(s);
     return s;
 }
 
@@ -716,11 +733,8 @@ block_t *vlc_stream_Block( stream_t *s, size_t size )
     return block;
 }
 
-/**
- * Returns a node containing all the input_item of the directory pointer by
- * this stream. returns VLC_SUCCESS on success.
- */
 int vlc_stream_ReadDir( stream_t *s, input_item_node_t *p_node )
 {
+    assert(s->pf_readdir != NULL);
     return s->pf_readdir( s, p_node );
 }

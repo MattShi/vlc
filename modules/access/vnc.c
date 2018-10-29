@@ -80,19 +80,21 @@ vlc_module_begin()
     set_category( CAT_INPUT )
     set_subcategory( SUBCAT_INPUT_ACCESS )
     set_description( N_("VNC client access") )
-    set_capability( "access_demux", 0 )
+    set_capability( "access", 0 )
 
     add_string( CFG_PREFIX "user", NULL, RFB_USER, RFB_USER, false )
         change_safe()
-    add_password( CFG_PREFIX "password", NULL, RFB_PASSWORD, RFB_PASSWORD, false )
+    add_password(CFG_PREFIX "password", NULL, RFB_PASSWORD, RFB_PASSWORD)
         change_safe()
-    add_loadfile( CFG_PREFIX "x509-ca", NULL, RFB_CA_TEXT, RFB_CA_LONGTEXT, true )
+    add_loadfile(CFG_PREFIX "x509-ca", NULL, RFB_CA_TEXT, RFB_CA_LONGTEXT)
         change_safe()
-    add_loadfile( CFG_PREFIX "x509-crl", NULL, RFB_CRL_TEXT, RFB_CRL_LONGTEXT, true )
+    add_loadfile(CFG_PREFIX "x509-crl", NULL, RFB_CRL_TEXT, RFB_CRL_LONGTEXT)
         change_safe()
-    add_loadfile( CFG_PREFIX "x509-client-cert", NULL, RFB_CERT_TEXT, RFB_CERT_LONGTEXT, true )
+    add_loadfile(CFG_PREFIX "x509-client-cert", NULL,
+                 RFB_CERT_TEXT, RFB_CERT_LONGTEXT)
         change_safe()
-    add_loadfile( CFG_PREFIX "x509-client-key", NULL, RFB_KEY_TEXT, RFB_KEY_LONGTEXT, true )
+    add_loadfile(CFG_PREFIX "x509-client-key", NULL,
+                 RFB_KEY_TEXT, RFB_KEY_LONGTEXT)
         change_safe()
 
     add_float( CFG_PREFIX "fps", 5, RFB_FPS, RFB_FPS_LONGTEXT, true )
@@ -109,7 +111,7 @@ vlc_module_begin()
     set_callbacks( Open, Close )
 vlc_module_end()
 
-struct demux_sys_t
+typedef struct
 {
     vlc_thread_t thread;
     int i_cancel_state;
@@ -120,10 +122,10 @@ struct demux_sys_t
 
     float f_fps;
     int i_frame_interval;
-    mtime_t i_starttime;
+    vlc_tick_t i_starttime;
 
     es_out_id_t *es;
-};
+} demux_sys_t;
 
 static void *DemuxThread( void *p_data );
 
@@ -276,7 +278,6 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     bool *pb;
-    int64_t *pi64;
     double *p_dbl;
     vlc_meta_t *p_meta;
 
@@ -297,19 +298,16 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = INT64_C(1000)
-                  * var_InheritInteger( p_demux, "network-caching" );
+            *va_arg( args, vlc_tick_t * ) =
+                VLC_TICK_FROM_MS(var_InheritInteger( p_demux, "network-caching" ));
             return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = mdate() - p_sys->i_starttime;
+            *va_arg( args, vlc_tick_t * ) = vlc_tick_now() - p_sys->i_starttime;
             return VLC_SUCCESS;
 
         case DEMUX_GET_LENGTH:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = 0;
+            *va_arg( args, vlc_tick_t * ) = 0;
             return VLC_SUCCESS;
 
         case DEMUX_GET_FPS:
@@ -335,7 +333,7 @@ static void *DemuxThread( void *p_data )
 {
     demux_t *p_demux = (demux_t *) p_data;
     demux_sys_t  *p_sys = p_demux->p_sys;
-    mtime_t i_next_frame_date = mdate() + p_sys->i_frame_interval;
+    vlc_tick_t i_next_frame_date = vlc_tick_now() + p_sys->i_frame_interval;
     int i_status;
 
     for(;;)
@@ -346,7 +344,7 @@ static void *DemuxThread( void *p_data )
 
         /* Ensure we're not building frames too fast */
         /* as WaitForMessage takes only a maximum wait */
-        mwait( i_next_frame_date );
+        vlc_tick_wait( i_next_frame_date );
         i_next_frame_date += p_sys->i_frame_interval;
 
         if ( i_status > 0 )
@@ -367,7 +365,7 @@ static void *DemuxThread( void *p_data )
                 block_t *p_block = block_Duplicate( p_sys->p_block );
                 if ( p_block ) /* drop frame/content if no next block */
                 {
-                    p_sys->p_block->i_dts = p_sys->p_block->i_pts = mdate();
+                    p_sys->p_block->i_dts = p_sys->p_block->i_pts = vlc_tick_now();
                     es_out_SetPCR( p_demux->out, p_sys->p_block->i_pts );
                     es_out_Send( p_demux->out, p_sys->es, p_sys->p_block );
                     p_sys->p_block = p_block;
@@ -386,12 +384,15 @@ static int Open( vlc_object_t *p_this )
     demux_t      *p_demux = (demux_t*)p_this;
     demux_sys_t  *p_sys;
 
+    if (p_demux->out == NULL)
+        return VLC_EGENERIC;
+
     p_sys = vlc_obj_calloc( p_this, 1, sizeof(demux_sys_t) );
     if( !p_sys ) return VLC_ENOMEM;
 
     p_sys->f_fps = var_InheritFloat( p_demux, CFG_PREFIX "fps" );
     if ( p_sys->f_fps <= 0 ) p_sys->f_fps = 1.0;
-    p_sys->i_frame_interval = 1000000 / p_sys->f_fps ;
+    p_sys->i_frame_interval = vlc_tick_rate_duration( p_sys->f_fps );
 
     char *psz_chroma = var_InheritString( p_demux, CFG_PREFIX "chroma" );
     vlc_fourcc_t i_chroma = vlc_fourcc_GetCodecFromString( VIDEO_ES, psz_chroma );
@@ -467,7 +468,7 @@ static int Open( vlc_object_t *p_this )
         return VLC_EGENERIC;
     }
 
-    p_sys->i_starttime = mdate();
+    p_sys->i_starttime = vlc_tick_now();
 
     if ( vlc_clone( &p_sys->thread, DemuxThread, p_demux, VLC_THREAD_PRIORITY_INPUT ) != VLC_SUCCESS )
     {

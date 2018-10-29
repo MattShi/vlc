@@ -72,16 +72,16 @@ static const char *ppsz_sout_options[] = {
     "id", "delay", NULL
 };
 
-static sout_stream_id_sys_t *Add( sout_stream_t *, const es_format_t * );
-static void              Del   ( sout_stream_t *, sout_stream_id_sys_t * );
-static int               Send  ( sout_stream_t *, sout_stream_id_sys_t *, block_t * );
+static void *Add( sout_stream_t *, const es_format_t * );
+static void  Del( sout_stream_t *, void * );
+static int   Send( sout_stream_t *, void *, block_t * );
 
-struct sout_stream_sys_t
+typedef struct
 {
-    sout_stream_id_sys_t *id;
+    void *id;
     int i_id;
-    mtime_t i_delay;
-};
+    vlc_tick_t i_delay;
+} sout_stream_sys_t;
 
 /*****************************************************************************
  * Open:
@@ -106,7 +106,7 @@ static int Open( vlc_object_t *p_this )
                    p_stream->p_cfg );
 
     p_sys->i_id = var_GetInteger( p_stream, SOUT_CFG_PREFIX "id" );
-    p_sys->i_delay = 1000 * var_GetInteger( p_stream, SOUT_CFG_PREFIX "delay" );
+    p_sys->i_delay = VLC_TICK_FROM_MS(var_GetInteger( p_stream, SOUT_CFG_PREFIX "delay" ));
 
     p_stream->pf_add    = Add;
     p_stream->pf_del    = Del;
@@ -128,7 +128,7 @@ static void Close( vlc_object_t * p_this )
     free( p_sys );
 }
 
-static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
+static void *Add( sout_stream_t *p_stream, const es_format_t *p_fmt )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
 
@@ -143,7 +143,7 @@ static sout_stream_id_sys_t * Add( sout_stream_t *p_stream, const es_format_t *p
     return sout_StreamIdAdd( p_stream->p_next, p_fmt );
 }
 
-static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
+static void Del( sout_stream_t *p_stream, void *id )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
 
@@ -153,8 +153,7 @@ static void Del( sout_stream_t *p_stream, sout_stream_id_sys_t *id )
     sout_StreamIdDel( p_stream->p_next, id );
 }
 
-static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
-                 block_t *p_buffer )
+static int Send( sout_stream_t *p_stream, void *id, block_t *p_buffer )
 {
     sout_stream_sys_t *p_sys = (sout_stream_sys_t *)p_stream->p_sys;
 
@@ -163,9 +162,9 @@ static int Send( sout_stream_t *p_stream, sout_stream_id_sys_t *id,
         block_t *p_block = p_buffer;
         while ( p_block != NULL )
         {
-            if ( p_block->i_pts != VLC_TS_INVALID )
+            if ( p_block->i_pts != VLC_TICK_INVALID )
                 p_block->i_pts += p_sys->i_delay;
-            if ( p_block->i_dts != VLC_TS_INVALID )
+            if ( p_block->i_dts != VLC_TICK_INVALID )
                 p_block->i_dts += p_sys->i_delay;
             p_block = p_block->p_next;
         }

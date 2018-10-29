@@ -49,24 +49,6 @@
 
 @end
 
-
-/*****************************************************************************
- * VLCMainWindowSplitView interface
- *****************************************************************************/
-@interface VLCMainWindowSplitView : NSSplitView
-
-@end
-
-/*****************************************************************************
- * VLCThreePartImageView interface
- *****************************************************************************/
-@interface VLCThreePartImageView : NSView
-
-- (void)setImagesLeft:(NSImage *)left middle: (NSImage *)middle right:(NSImage *)right;
-
-@end
-
-
 /*****************************************************************************
  * PositionFormatter interface
  *
@@ -98,21 +80,6 @@
  * VLCByteCountFormatter addition
  *****************************************************************************/
 
-#ifndef MAC_OS_X_VERSION_10_8
-enum {
-    // Specifies display of file or storage byte counts. The actual behavior for this is platform-specific; on OS X 10.7 and less, this uses the binary style, but decimal style on 10.8 and above
-    NSByteCountFormatterCountStyleFile   = 0,
-    // Specifies display of memory byte counts. The actual behavior for this is platform-specific; on OS X 10.7 and less, this uses the binary style, but that may change over time.
-    NSByteCountFormatterCountStyleMemory = 1,
-    // The following two allow specifying the number of bytes for KB explicitly. It's better to use one of the above values in most cases.
-    NSByteCountFormatterCountStyleDecimal = 2,    // 1000 bytes are shown as 1 KB
-    NSByteCountFormatterCountStyleBinary  = 3     // 1024 bytes are shown as 1 KB
-};
-typedef NSInteger NSByteCountFormatterCountStyle;
-#endif
-
-@interface VLCByteCountFormatter : NSFormatter {
-}
-
+@interface VLCByteCountFormatter : NSFormatter
 + (NSString *)stringFromByteCount:(long long)byteCount countStyle:(NSByteCountFormatterCountStyle)countStyle;
 @end

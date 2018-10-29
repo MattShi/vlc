@@ -357,7 +357,7 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
         return VLCDEC_SUCCESS;
     }
 
-    subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
     const text_style_t *p_root_style = (text_style_t *) p_dec->p_sys;
 
     mp4_box_iterator_t it;
@@ -414,7 +414,7 @@ static int Decode( decoder_t *p_dec, block_t *p_block )
 
     p_spu->i_start    = p_block->i_pts;
     p_spu->i_stop     = p_block->i_pts + p_block->i_length;
-    p_spu->b_ephemer  = (p_block->i_length == 0);
+    p_spu->b_ephemer  = (p_block->i_length == VLC_TICK_INVALID);
     p_spu->b_absolute = false;
 
     p_spu_sys->region.align = SUBPICTURE_ALIGN_BOTTOM;
@@ -532,7 +532,7 @@ static int OpenDecoder( vlc_object_t *p_this )
 
     p_dec->pf_decode = Decode;
 
-    p_dec->p_sys = (decoder_sys_t *) text_style_Create( STYLE_NO_DEFAULTS );
+    p_dec->p_sys = text_style_Create( STYLE_NO_DEFAULTS );
     if( !p_dec->p_sys )
         return VLC_ENOMEM;
 

@@ -1,5 +1,5 @@
 # mpg123
-MPG123_VERSION := 1.25.7
+MPG123_VERSION := 1.25.10
 MPG123_URL := $(SF)/mpg123/mpg123/$(MPG123_VERSION)/mpg123-$(MPG123_VERSION).tar.bz2
 
 PKGS += mpg123
@@ -24,6 +24,10 @@ ifdef HAVE_VISUALSTUDIO
 ifeq ($(ARCH), x86_64)
 MPG123CONF += --with-cpu=generic_dither
 endif
+endif
+
+ifdef HAVE_NACL
+MPG123CONF += ac_cv_header_sys_select_h=no
 endif
 
 $(TARBALLS)/mpg123-$(MPG123_VERSION).tar.bz2:

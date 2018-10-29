@@ -47,17 +47,34 @@ struct stream_t
 {
     struct vlc_common_members obj;
 
-    /* Module properties for stream filter */
-    module_t    *p_module;
-
     char        *psz_name;
     char        *psz_url; /**< Full URL or MRL (can be NULL) */
     const char  *psz_location; /**< Location (URL with the scheme stripped) */
     char        *psz_filepath; /**< Local file path (if applicable) */
     bool         b_preparsing; /**< True if this access is used to preparse */
+    input_item_t *p_input_item;/**< Input item (can be NULL) */
 
-    /* Stream source for stream filter */
-    stream_t    *s;
+    union {
+        /**
+         * Input stream
+         *
+         * Depending on the module capability:
+         * - "stream filter" or "demux": input byte stream (not NULL)
+         * - "access": a NULL pointer
+         * - "demux_filter": undefined
+         */
+        stream_t    *s;
+        /**
+         * Input demuxer
+         *
+         * If the module capability is "demux_filter", this is the upstream
+         * demuxer or demux filter. Otherwise, this is undefined.
+         */
+        demux_t *p_next;
+    };
+
+    /* es output */
+    es_out_t    *out;   /* our p_es_out */
 
     /**
      * Read data.
@@ -104,6 +121,8 @@ struct stream_t
      */
     int         (*pf_readdir)(stream_t *, input_item_node_t *);
 
+    int         (*pf_demux)(stream_t *);
+
     /**
      * Seek.
      *
@@ -126,9 +145,6 @@ struct stream_t
      * Private data pointer
      */
     void *p_sys;
-
-    /* Weak link to parent input */
-    input_thread_t *p_input;
 };
 
 /**
@@ -143,10 +159,9 @@ enum stream_query_e
     STREAM_CAN_CONTROL_PACE,    /**< arg1= bool *   res=cannot fail*/
     /* */
     STREAM_GET_SIZE=6,          /**< arg1= uint64_t *     res=can fail */
-    STREAM_IS_DIRECTORY,        /**< res=can fail */
 
     /* */
-    STREAM_GET_PTS_DELAY = 0x101,/**< arg1= int64_t* res=cannot fail */
+    STREAM_GET_PTS_DELAY = 0x101,/**< arg1= vlc_tick_t* res=cannot fail */
     STREAM_GET_TITLE_INFO, /**< arg1=input_title_t*** arg2=int* res=can fail */
     STREAM_GET_TITLE,       /**< arg1=unsigned * res=can fail */
     STREAM_GET_SEEKPOINT,   /**< arg1=unsigned * res=can fail */
@@ -163,7 +178,7 @@ enum stream_query_e
     STREAM_SET_RECORD_STATE,     /**< arg1=bool, arg2=const char *psz_ext (if arg1 is true)  res=can fail */
 
     STREAM_SET_PRIVATE_ID_STATE = 0x1000, /* arg1= int i_private_data, bool b_selected    res=can fail */
-    STREAM_SET_PRIVATE_ID_CA,             /* arg1= int i_program_number, uint16_t i_vpid, uint16_t i_apid1, uint16_t i_apid2, uint16_t i_apid3, uint8_t i_length, uint8_t *p_data */
+    STREAM_SET_PRIVATE_ID_CA,             /* arg1= void * */
     STREAM_GET_PRIVATE_ID_STATE,          /* arg1=int i_private_data arg2=bool *          res=can fail */
 };
 
@@ -297,7 +312,18 @@ static inline int vlc_stream_Control(stream_t *s, int query, ...)
 
 VLC_API block_t *vlc_stream_Block(stream_t *s, size_t);
 VLC_API char *vlc_stream_ReadLine(stream_t *);
-VLC_API int vlc_stream_ReadDir(stream_t *, input_item_node_t *);
+
+/**
+ * Reads a directory.
+ *
+ * This function fills an input item node with any and all the items within
+ * a directory. The behaviour is undefined if the stream is not a directory.
+ *
+ * \param s directory object to read from
+ * \param node node to store the items into
+ * \return VLC_SUCCESS on success
+ */
+VLC_API int vlc_stream_ReadDir(stream_t *s, input_item_node_t *node);
 
 /**
  * Closes a byte stream.
@@ -470,22 +496,6 @@ VLC_API void vlc_stream_fifo_Close(stream_t *s);
  * @return New stream to use, or NULL if the filter could not be added.
  **/
 VLC_API stream_t* vlc_stream_FilterNew( stream_t *p_source, const char *psz_stream_filter );
-
-/**
- * Default ReadDir implementation for stream Filter. This implementation just
- * forward the pf_readdir call to the p_source stream.
- */
-VLC_API int vlc_stream_FilterDefaultReadDir(stream_t *s,
-                                            input_item_node_t *p_node);
-
-/**
- * Sets vlc_stream_FilterDefaultReadDir as the pf_readdir callback for this
- * stream filter.
- */
-#define stream_FilterSetDefaultReadDir(stream) \
-do { \
-    (stream)->pf_readdir = vlc_stream_FilterDefaultReadDir; \
-} while (0)
 
 /**
  * @}

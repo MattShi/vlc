@@ -41,7 +41,17 @@
 
 #define QTKIT_VERSION_MIN_REQUIRED 70603
 
+#import <AvailabilityMacros.h>
 #import <QTKit/QTKit.h>
+#import <AVFoundation/AVFoundation.h>
+
+#ifndef MAC_OS_X_VERSION_10_14
+@interface AVCaptureDevice (AVCaptureDeviceAuthorizationSince10_14)
+
++ (void)requestAccessForMediaType:(AVMediaType)mediaType completionHandler:(void (^)(BOOL granted))handler API_AVAILABLE(macos(10.14), ios(7.0));
+
+@end
+#endif
 
 /*****************************************************************************
  * Local prototypes.
@@ -61,7 +71,7 @@ set_description(N_("QuickTime Sound Capture"))
 set_category(CAT_INPUT)
 set_subcategory(SUBCAT_INPUT_ACCESS)
 add_shortcut("qtsound")
-set_capability("access_demux", 0)
+set_capability("access", 0)
 set_callbacks(Open, Close)
 vlc_module_end ()
 
@@ -76,14 +86,14 @@ vlc_module_end ()
     void *rawAudioData;
     UInt32 numberOfSamples;
     date_t date;
-    mtime_t currentPts;
-    mtime_t previousPts;
+    vlc_tick_t currentPts;
+    vlc_tick_t previousPts;
 }
 - (id)initWithDemux:(demux_t *)p_demux;
 - (void)outputAudioSampleBuffer:(QTSampleBuffer *)sampleBuffer fromConnection:(QTCaptureConnection *)connection;
 - (BOOL)checkCurrentAudioBuffer;
 - (void)freeAudioMem;
-- (mtime_t)getCurrentPts;
+- (vlc_tick_t)getCurrentPts;
 - (void *)getCurrentAudioBufferData;
 - (UInt32)getCurrentTotalDataSize;
 - (UInt32)getNumberOfSamples;
@@ -97,7 +107,7 @@ vlc_module_end ()
         p_qtsound = p_demux;
         currentAudioBuffer = nil;
         date_Init(&date, 44100, 1);
-        date_Set(&date,0);
+        date_Set(&date, VLC_TICK_0);
         currentPts = 0;
         previousPts = 0;
     }
@@ -184,10 +194,10 @@ vlc_module_end ()
     FREENULL(rawAudioData);
 }
 
-- (mtime_t)getCurrentPts
+- (vlc_tick_t)getCurrentPts
 {
     /* FIXME: can this getter be minimized? */
-    mtime_t pts;
+    vlc_tick_t pts;
 
     if(!currentAudioBuffer || currentPts == previousPts)
         return 0;
@@ -220,12 +230,12 @@ vlc_module_end ()
  * Struct
  *****************************************************************************/
 
-struct demux_sys_t {
+typedef struct demux_sys_t {
     QTCaptureSession * session;
     QTCaptureDevice * audiodevice;
     VLCDecompressedAudioOutput * audiooutput;
     es_out_id_t *p_es_audio;
-};
+} demux_sys_t;
 
 /*****************************************************************************
  * Open: initialize interface
@@ -243,6 +253,9 @@ static int Open(vlc_object_t *p_this)
     QTFormatDescription *audio_format;
     QTCaptureDeviceInput *audioInput;
     NSError *o_returnedAudioError;
+
+    if (p_demux->out == NULL)
+        return VLC_EGENERIC;
 
     @autoreleasepool {
         if(p_demux->psz_location && *p_demux->psz_location)
@@ -307,6 +320,24 @@ static int Open(vlc_object_t *p_this)
             msg_Err(p_demux, "default audio capture device is exclusively in use by another application");
             goto error;
         }
+
+        if (@available(macOS 10.14, *)) {
+            msg_Dbg(p_demux, "Check user consent for access to the audio device");
+
+            dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+            __block bool accessGranted = NO;
+            [AVCaptureDevice requestAccessForMediaType: AVMediaTypeAudio completionHandler:^(BOOL granted) {
+                accessGranted = granted;
+                dispatch_semaphore_signal(sema);
+            } ];
+            dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
+            dispatch_release(sema);
+            if (!accessGranted) {
+                msg_Err(p_demux, "Can't use the audio device as access has not been granted by the user");
+                goto error;
+            }
+        }
+
         audioInput = [[QTCaptureDeviceInput alloc] initWithDevice: p_sys->audiodevice];
         if(!audioInput) {
             msg_Err(p_demux, "can't create a valid audio capture input facility");
@@ -514,7 +545,7 @@ static int Demux(demux_t *p_demux)
             block_Release(p_blocka);
 
             // Nothing to transfer yet, just forget
-            msleep(10000);
+            vlc_tick_sleep(VLC_HARD_MIN_SLEEP);
             return 1;
         }
 
@@ -531,7 +562,6 @@ static int Demux(demux_t *p_demux)
 static int Control(demux_t *p_demux, int i_query, va_list args)
 {
     bool *pb;
-    int64_t *pi64;
 
     switch(i_query) {
             /* Special for access_demux */
@@ -544,8 +574,8 @@ static int Control(demux_t *p_demux, int i_query, va_list args)
             return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-            pi64 = (int64_t*)va_arg(args, int64_t *);
-            *pi64 = INT64_C(1000) * var_InheritInteger(p_demux, "live-caching");
+            *va_arg(args, vlc_tick_t *) =
+                VLC_TICK_FROM_MS(var_InheritInteger(p_demux, "live-caching"));
             return VLC_SUCCESS;
 
         default:

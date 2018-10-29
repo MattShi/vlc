@@ -41,6 +41,7 @@ pluginsinclude_HEADERS = \
 	../include/vlc_config_cat.h \
 	../include/vlc_configuration.h \
 	../include/vlc_cpu.h \
+	../include/vlc_cxx_helpers.hpp \
 	../include/vlc_dialog.h \
 	../include/vlc_demux.h \
 	../include/vlc_epg.h \
@@ -60,6 +61,7 @@ pluginsinclude_HEADERS = \
 	../include/vlc_input_item.h \
 	../include/vlc_interface.h \
 	../include/vlc_keystore.h \
+	../include/vlc_list.h \
 	../include/vlc_md5.h \
 	../include/vlc_messages.h \
 	../include/vlc_meta.h \
@@ -69,7 +71,6 @@ pluginsinclude_HEADERS = \
 	../include/vlc_mime.h \
 	../include/vlc_modules.h \
 	../include/vlc_mouse.h \
-	../include/vlc_mtime.h \
 	../include/vlc_network.h \
 	../include/vlc_objects.h \
 	../include/vlc_picture.h \
@@ -91,10 +92,12 @@ pluginsinclude_HEADERS = \
 	../include/vlc_subpicture.h \
 	../include/vlc_text_style.h \
 	../include/vlc_threads.h \
+	../include/vlc_tick.h \
 	../include/vlc_timestamp_helper.h \
 	../include/vlc_tls.h \
 	../include/vlc_url.h \
 	../include/vlc_variables.h \
+	../include/vlc_vector.h \
 	../include/vlc_viewpoint.h \
 	../include/vlc_vlm.h \
 	../include/vlc_video_splitter.h \
@@ -116,7 +119,6 @@ noinst_HEADERS = \
 	../include/vlc_pgpkey.h \
 	../include/vlc_update.h \
 	../include/vlc_vod.h \
-	../include/vlc_vout_wrapper.h \
 	$(NULL)
 
 ../include/vlc_about.h: Makefile.am $(top_srcdir)/COPYING $(top_srcdir)/THANKS $(top_srcdir)/AUTHORS
@@ -169,9 +171,13 @@ lib_LTLIBRARIES = libvlccore.la
 
 AM_CPPFLAGS = $(INCICONV) $(IDN_CFLAGS) \
 	-DMODULE_STRING=\"core\" \
+	-DSYSDATADIR=\"$(datadir)\" \
+	-DLIBDIR=\"$(libdir)\" \
+	-DLIBEXECDIR=\"$(libexecdir)\" \
 	-DLOCALEDIR=\"$(localedir)\" \
-	-DPKGDATADIR=\"$(vlcdatadir)\" \
-	-DPKGLIBDIR=\"$(vlclibdir)\"
+	-DPKGDATADIR=\"$(pkgdatadir)\" \
+	-DPKGLIBDIR=\"$(pkglibdir)\" \
+	-DPKGLIBEXECDIR=\"$(pkglibexecdir)\"
 AM_CFLAGS = $(CFLAGS_libvlccore)
 if HAVE_DYNAMIC_PLUGINS
 AM_CPPFLAGS += -DHAVE_DYNAMIC_PLUGINS
@@ -207,37 +213,38 @@ libvlccore_la_SOURCES = \
 	interface/dialog.c \
 	interface/interface.c \
 	playlist/playlist_internal.h \
-	playlist/art.c \
-	playlist/art.h \
 	playlist/aout.c \
 	playlist/thread.c \
 	playlist/control.c \
 	playlist/engine.c \
-	playlist/fetcher.c \
-	playlist/fetcher.h \
 	playlist/sort.c \
 	playlist/loadsave.c \
-	playlist/preparser.c \
-	playlist/preparser.h \
 	playlist/tree.c \
 	playlist/item.c \
 	playlist/search.c \
 	playlist/services_discovery.c \
 	playlist/renderer.c \
+	preparser/art.c \
+	preparser/art.h \
+	preparser/fetcher.c \
+	preparser/fetcher.h \
+	preparser/preparser.c \
+	preparser/preparser.h \
 	input/item.c \
 	input/access.c \
-	input/clock.c \
+	clock/clock_internal.c \
+	clock/input_clock.c \
 	input/control.c \
 	input/decoder.c \
 	input/demux.c \
 	input/demux_chained.c \
 	input/es_out.c \
 	input/es_out_timeshift.c \
-	input/event.c \
 	input/input.c \
 	input/info.h \
 	input/meta.c \
-	input/clock.h \
+	clock/input_clock.h \
+	clock/clock_internal.h \
 	input/decoder.h \
 	input/demux.h \
 	input/es_out.h \
@@ -272,7 +279,6 @@ libvlccore_la_SOURCES = \
 	video_output/control.h \
 	video_output/display.c \
 	video_output/display.h \
-	video_output/event.h \
 	video_output/inhibit.c \
 	video_output/inhibit.h \
 	video_output/interlacing.c \
@@ -286,12 +292,12 @@ libvlccore_la_SOURCES = \
 	video_output/video_widgets.c \
 	video_output/vout_subpictures.c \
 	video_output/vout_spuregion_helper.h \
+	video_output/vout_wrapper.h \
 	video_output/window.c \
 	video_output/window.h \
 	video_output/opengl.c \
 	video_output/vout_intf.c \
 	video_output/vout_internal.h \
-	video_output/vout_control.h \
 	video_output/vout_wrapper.c \
 	network/getaddrinfo.c \
 	network/http_auth.c \
@@ -300,6 +306,7 @@ libvlccore_la_SOURCES = \
 	network/tcp.c \
 	network/udp.c \
 	network/rootbind.c \
+	network/stream.c \
 	network/tls.c \
 	text/charset.c \
 	text/memstream.c \
@@ -350,11 +357,12 @@ libvlccore_la_SOURCES = \
 	misc/fingerprinter.c \
 	misc/text_style.c \
 	misc/subpicture.c \
-	misc/subpicture.h
+	misc/subpicture.h \
+	misc/medialibrary.c
 libvlccore_la_LIBADD = $(LIBS_libvlccore) \
 	../compat/libcompat.la \
 	$(LTLIBINTL) $(LTLIBICONV) \
-	$(IDN_LIBS) $(LIBPTHREAD) $(SOCKET_LIBS) $(LIBRT) $(LIBDL) $(LIBM)
+	$(IDN_LIBS) $(SOCKET_LIBS) $(LIBRT) $(LIBDL) $(LIBM)
 
 if HAVE_WIN32
 libvlccore_la_SOURCES += \
@@ -413,14 +421,18 @@ if HAVE_DARWIN
 libvlccore_la_SOURCES += \
 	darwin/dirs.c \
 	darwin/error.c \
-	darwin/netconf.c \
 	darwin/specific.c \
 	darwin/thread.c
+
+libvlccore_objc_la_SOURCES = \
+	darwin/netconf.m
+noinst_LTLIBRARIES = libvlccore_objc.la
 else
 libvlccore_la_SOURCES += \
 	posix/dirs.c \
 	posix/error.c \
 	posix/netconf.c \
+	posix/picture.c \
 	posix/specific.c \
 	posix/thread.c
 if HAVE_LINUX
@@ -479,7 +491,11 @@ if HAVE_DBUS
 libvlccore_la_LIBADD += $(DBUS_LIBS)
 endif
 if HAVE_DARWIN
-libvlccore_la_LDFLAGS += -Xlinker -install_name -Xlinker @rpath/libvlccore.dylib
+$(libvlccore_la_OBJECTS): libvlccore_objc.la
+libvlccore_objc_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-arc
+libvlccore_objc_la_LDFLAGS = -static
+libvlccore_la_LIBADD += libvlccore_objc.la
+libvlccore_la_LDFLAGS +=  -Wl,-framework,Foundation -Xlinker -install_name -Xlinker @rpath/libvlccore.dylib
 endif
 
 libvlc_win32_rc.$(OBJEXT): libvlc_win32_rc.rc $(top_srcdir)/extras/package/win32/libvlc.dll.manifest
@@ -506,6 +522,7 @@ check_PROGRAMS = \
 	test_dictionary \
 	test_i18n_atof \
 	test_interrupt \
+	test_list \
 	test_md5 \
 	test_picture_pool \
 	test_sort \
@@ -514,7 +531,9 @@ check_PROGRAMS = \
 	test_utf8 \
 	test_xmlent \
 	test_headers \
-	test_mrl_helpers
+	test_mrl_helpers \
+	test_arrays \
+	test_vector
 
 TESTS = $(check_PROGRAMS) check_symbols
 
@@ -525,7 +544,8 @@ test_block_DEPENDENCIES =
 test_dictionary_SOURCES = test/dictionary.c
 test_i18n_atof_SOURCES = test/i18n_atof.c
 test_interrupt_SOURCES = test/interrupt.c
-test_interrupt_LDADD = $(LDADD) $(LIBS_libvlccore) $(LIBPTHREAD)
+test_interrupt_LDADD = $(LDADD) $(LIBS_libvlccore)
+test_list_SOURCES = test/list.c
 test_md5_SOURCES = test/md5.c
 test_picture_pool_SOURCES = test/picture_pool.c
 test_sort_SOURCES = test/sort.c
@@ -535,6 +555,8 @@ test_utf8_SOURCES = test/utf8.c
 test_xmlent_SOURCES = test/xmlent.c
 test_headers_SOURCES = test/headers.c
 test_mrl_helpers_SOURCES = test/mrl_helpers.c
+test_arrays_SOURCES = test/arrays.c
+test_vector_SOURCES = test/vector.c
 
 AM_LDFLAGS = -no-install
 LDADD = libvlccore.la \
@@ -559,7 +581,7 @@ $(srcdir)/revision.txt:
 stamp-revision:
 	$(AM_V_at)rm -f -- revision.tmp
 	$(AM_V_GEN)if ! git \
-			--git-dir="$(top_srcdir)/.git/" describe \
+			--git-dir="$(top_srcdir)/.git" describe \
 			--tags --long --match '?.*.*' --always; then \
 		cat $(srcdir)/revision.txt ; \
 	fi > revision.tmp

@@ -8,18 +8,18 @@
  * Authors: Boris Dorès <babal@via.ecp.fr>
  *
  * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.
+ * under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 2.1 of the License, or
+ * (at your option) any later version.
  *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc., 51
- * Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program; if not, write to the Free Software Foundation,
+ * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
 /*****************************************************************************
@@ -32,7 +32,6 @@
 
 #include <math.h>                                        /* sqrt */
 
-#define VLC_MODULE_LICENSE VLC_LICENSE_GPL_2_PLUS
 #include <vlc_common.h>
 #include <vlc_plugin.h>
 #include <vlc_aout.h>
@@ -103,13 +102,13 @@ struct atomic_operation_t
     double d_amplitude_factor;
 };
 
-struct filter_sys_t
+typedef struct
 {
     size_t i_overflow_buffer_size;/* in bytes */
     float * p_overflow_buffer;
     unsigned int i_nb_atomic_operations;
     struct atomic_operation_t * p_atomic_operations;
-};
+} filter_sys_t;
 
 /*****************************************************************************
  * Init: initialize internal data structures
@@ -129,7 +128,7 @@ struct filter_sys_t
  *
  *          x-axis
  *  */
-static void ComputeChannelOperations( struct filter_sys_t * p_data
+static void ComputeChannelOperations( filter_sys_t * p_data
         , unsigned int i_rate, unsigned int i_next_atomic_operation
         , int i_source_channel_offset, double d_x, double d_z
         , double d_compensation_length, double d_channel_amplitude_factor )
@@ -186,7 +185,7 @@ static void ComputeChannelOperations( struct filter_sys_t * p_data
     }
 }
 
-static int Init( vlc_object_t *p_this, struct filter_sys_t * p_data
+static int Init( vlc_object_t *p_this, filter_sys_t * p_data
         , unsigned int i_nb_channels, uint32_t i_physical_channels
         , unsigned int i_rate )
 {
@@ -451,7 +450,7 @@ static int OpenFilter( vlc_object_t *p_this )
     }
 
     /* Allocate the memory needed to store the module's structure */
-    p_sys = p_filter->p_sys = malloc( sizeof(struct filter_sys_t) );
+    p_sys = p_filter->p_sys = malloc( sizeof(filter_sys_t) );
     if( p_sys == NULL )
         return VLC_ENOMEM;
     p_sys->i_overflow_buffer_size = 0;
@@ -494,10 +493,11 @@ static int OpenFilter( vlc_object_t *p_this )
 static void CloseFilter( vlc_object_t *p_this )
 {
     filter_t *p_filter = (filter_t *)p_this;
+    filter_sys_t *p_sys = p_filter->p_sys;
 
-    free( p_filter->p_sys->p_overflow_buffer );
-    free( p_filter->p_sys->p_atomic_operations );
-    free( p_filter->p_sys );
+    free( p_sys->p_overflow_buffer );
+    free( p_sys->p_atomic_operations );
+    free( p_sys );
 }
 
 static block_t *Convert( filter_t *p_filter, block_t *p_block )

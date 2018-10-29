@@ -71,7 +71,7 @@ vlc_module_begin ()
     set_description (N_("Screen capture (with X11/XCB)"))
     set_category (CAT_INPUT)
     set_subcategory (SUBCAT_INPUT_ACCESS)
-    set_capability ("access_demux", 0)
+    set_capability ("access", 0)
     set_callbacks (Open, Close)
 
     add_float ("screen-fps", 2.0, FPS_TEXT, FPS_LONGTEXT, true)
@@ -101,7 +101,7 @@ static int Control (demux_t *, int, va_list);
 static es_out_id_t *InitES (demux_t *, uint_fast16_t, uint_fast16_t,
                             uint_fast8_t, uint8_t *);
 
-struct demux_sys_t
+typedef struct
 {
     /* All owned by timer thread while timer is armed: */
     xcb_connection_t *conn; /**< XCB connection */
@@ -118,7 +118,7 @@ struct demux_sys_t
     uint16_t          cur_w, cur_h; /**< Actual capture pixel dimensions */
     /* Timer does not use this, only input thread: */
     vlc_timer_t       timer;
-};
+} demux_sys_t;
 
 /** Checks MIT-SHM shared memory support */
 static bool CheckSHM (xcb_connection_t *conn)
@@ -142,8 +142,10 @@ static bool CheckSHM (xcb_connection_t *conn)
 static int Open (vlc_object_t *obj)
 {
     demux_t *demux = (demux_t *)obj;
-    demux_sys_t *p_sys = malloc (sizeof (*p_sys));
+    if (demux->out == NULL)
+        return VLC_EGENERIC;
 
+    demux_sys_t *p_sys = malloc (sizeof (*p_sys));
     if (p_sys == NULL)
         return VLC_ENOMEM;
     demux->p_sys = p_sys;
@@ -235,7 +237,7 @@ static int Open (vlc_object_t *obj)
     if (!p_sys->rate)
         goto error;
 
-    mtime_t interval = (float)CLOCK_FREQ / p_sys->rate;
+    vlc_tick_t interval = (float)CLOCK_FREQ / p_sys->rate;
     if (!interval)
         goto error;
 
@@ -245,7 +247,7 @@ static int Open (vlc_object_t *obj)
     p_sys->es = NULL;
     if (vlc_timer_create (&p_sys->timer, Demux, demux))
         goto error;
-    vlc_timer_schedule (p_sys->timer, false, 1, interval);
+    vlc_timer_schedule_asap (p_sys->timer, interval);
 
     /* Initializes demux */
     demux->pf_demux   = NULL;
@@ -290,8 +292,7 @@ static int Control (demux_t *demux, int query, va_list args)
         case DEMUX_GET_LENGTH:
         case DEMUX_GET_TIME:
         {
-            int64_t *v = va_arg (args, int64_t *);
-            *v = 0;
+            *va_arg (args, vlc_tick_t *) = 0;
             return VLC_SUCCESS;
         }
 
@@ -299,8 +300,8 @@ static int Control (demux_t *demux, int query, va_list args)
 
         case DEMUX_GET_PTS_DELAY:
         {
-            int64_t *v = va_arg (args, int64_t *);
-            *v = INT64_C(1000) * var_InheritInteger (demux, "live-caching");
+            *va_arg (args, vlc_tick_t *) =
+                VLC_TICK_FROM_MS(var_InheritInteger (demux, "live-caching"));
             return VLC_SUCCESS;
         }
 
@@ -500,7 +501,7 @@ noshm:
     /* Send block - zero copy */
     if (sys->es != NULL)
     {
-        block->i_pts = block->i_dts = mdate ();
+        block->i_pts = block->i_dts = vlc_tick_now ();
 
         es_out_SetPCR(demux->out, block->i_pts);
         es_out_Send (demux->out, sys->es, block);

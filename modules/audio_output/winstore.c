@@ -50,12 +50,12 @@ static void LeaveMTA(void)
     CoUninitialize();
 }
 
-struct aout_sys_t
+typedef struct
 {
     aout_stream_t *stream; /**< Underlying audio output stream */
     module_t *module;
     IAudioClient *client;
-};
+} aout_sys_t;
 
 static int vlc_FromHR(audio_output_t *aout, HRESULT hr)
 {
@@ -136,7 +136,7 @@ done:
     return SUCCEEDED(hr) ? 0 : -1;
 }
 
-static int TimeGet(audio_output_t *aout, mtime_t *restrict delay)
+static int TimeGet(audio_output_t *aout, vlc_tick_t *restrict delay)
 {
     aout_sys_t *sys = aout->sys;
     if( unlikely( sys->client == NULL ) )
@@ -150,7 +150,7 @@ static int TimeGet(audio_output_t *aout, mtime_t *restrict delay)
     return SUCCEEDED(hr) ? 0 : -1;
 }
 
-static void Play(audio_output_t *aout, block_t *block)
+static void Play(audio_output_t *aout, block_t *block, vlc_tick_t date)
 {
     aout_sys_t *sys = aout->sys;
     if( unlikely( sys->client == NULL ) )
@@ -161,9 +161,10 @@ static void Play(audio_output_t *aout, block_t *block)
     LeaveMTA();
 
     vlc_FromHR(aout, hr);
+    (void) date;
 }
 
-static void Pause(audio_output_t *aout, bool paused, mtime_t date)
+static void Pause(audio_output_t *aout, bool paused, vlc_tick_t date)
 {
     aout_sys_t *sys = aout->sys;
     if( unlikely( sys->client == NULL ) )

@@ -25,7 +25,6 @@
 # include "config.h"
 #endif
 
-#include <vlc_vout_wrapper.h>
 #include "events.h"
 
 #include <initguid.h>
@@ -216,6 +215,7 @@ void *HookWindowsSensors(vout_display_t *vd, HWND hwnd)
                     }
 
                     pSensor->Release();
+                    pSensor = NULL;
                 }
             }
             pInclinometers->Release();

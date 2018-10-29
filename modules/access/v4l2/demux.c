@@ -42,7 +42,7 @@
 
 #include "v4l2.h"
 
-struct demux_sys_t
+typedef struct
 {
     int fd;
     vlc_thread_t thread;
@@ -57,12 +57,12 @@ struct demux_sys_t
 
     es_out_id_t *es;
     vlc_v4l2_ctrl_t *controls;
-    mtime_t start;
+    vlc_tick_t start;
 
 #ifdef ZVBI_COMPILED
     vlc_v4l2_vbi_t *vbi;
 #endif
-};
+} demux_sys_t;
 
 static void *UserPtrThread (void *);
 static void *MmapThread (void *);
@@ -73,6 +73,8 @@ static int InitVideo (demux_t *, int fd, uint32_t caps);
 int DemuxOpen( vlc_object_t *obj )
 {
     demux_t *demux = (demux_t *)obj;
+    if (demux->out == NULL)
+        return VLC_EGENERIC;
 
     demux_sys_t *sys = malloc (sizeof (*sys));
     if (unlikely(sys == NULL))
@@ -102,7 +104,7 @@ int DemuxOpen( vlc_object_t *obj )
     }
 
     sys->controls = ControlsInit (VLC_OBJECT(demux), fd);
-    sys->start = mdate ();
+    sys->start = vlc_tick_now ();
     demux->pf_demux = NULL;
     demux->pf_control = DemuxControl;
     return VLC_SUCCESS;
@@ -809,7 +811,7 @@ static void *ReadThread (void *data)
                 v4l2_read (fd, NULL, 0); /* discard frame */
                 continue;
             }
-            block->i_pts = block->i_dts = mdate ();
+            block->i_pts = block->i_dts = vlc_tick_now ();
             block->i_flags |= sys->block_flags;
 
             int canc = vlc_savecancel ();
@@ -846,12 +848,12 @@ static int DemuxControl( demux_t *demux, int query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_GET_PTS_DELAY:
-            *va_arg(args,int64_t *) = INT64_C(1000)
-                * var_InheritInteger( demux, "live-caching" );
+            *va_arg(args,vlc_tick_t *) = VLC_TICK_FROM_MS(
+                var_InheritInteger( demux, "live-caching" ) );
             return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            *va_arg (args, int64_t *) = mdate() - sys->start;
+            *va_arg (args, vlc_tick_t *) = vlc_tick_now() - sys->start;
             return VLC_SUCCESS;
 
         /* TODO implement others */

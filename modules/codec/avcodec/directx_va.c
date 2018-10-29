@@ -39,24 +39,28 @@
 #define D3D_DecoderType     IUnknown
 #define D3D_DecoderDevice   IUnknown
 #define D3D_DecoderSurface  IUnknown
-struct picture_sys_t {
+typedef struct
+{
     void *dummy;
-};
+} picture_sys_t;
 #include "directx_va.h"
 
 #include "avcodec.h"
 #include "../../packetizer/h264_nal.h"
 #include "../../packetizer/hevc_nal.h"
 
-static const int PROF_MPEG2_SIMPLE[] = { FF_PROFILE_MPEG2_SIMPLE, 0 };
 static const int PROF_MPEG2_MAIN[]   = { FF_PROFILE_MPEG2_SIMPLE,
                                          FF_PROFILE_MPEG2_MAIN, 0 };
-static const int PROF_H264_HIGH[]    = { FF_PROFILE_H264_CONSTRAINED_BASELINE,
+static const int PROF_H264_HIGH[]    = { FF_PROFILE_H264_BASELINE,
+                                         FF_PROFILE_H264_CONSTRAINED_BASELINE,
                                          FF_PROFILE_H264_MAIN,
                                          FF_PROFILE_H264_HIGH, 0 };
 static const int PROF_HEVC_MAIN[]    = { FF_PROFILE_HEVC_MAIN, 0 };
 static const int PROF_HEVC_MAIN10[]  = { FF_PROFILE_HEVC_MAIN,
                                          FF_PROFILE_HEVC_MAIN_10, 0 };
+
+static const int PROF_VP9_MAIN[]    = { FF_PROFILE_VP9_0, 0 };
+static const int PROF_VP9_10[]      = { FF_PROFILE_VP9_2, 0 };
 
 #include <winapifamily.h>
 #if defined(WINAPI_FAMILY)
@@ -175,7 +179,7 @@ static const directx_va_mode_t DXVA_MODES[] = {
     { "MPEG-2 decoder, restricted profile C",                                         &DXVA_ModeMPEG2_C,                      0, NULL },
     { "MPEG-2 decoder, restricted profile D",                                         &DXVA_ModeMPEG2_D,                      0, NULL },
 
-    { "MPEG-2 variable-length decoder",                                               &DXVA2_ModeMPEG2_VLD,                   AV_CODEC_ID_MPEG2VIDEO, PROF_MPEG2_SIMPLE },
+    { "MPEG-2 variable-length decoder",                                               &DXVA2_ModeMPEG2_VLD,                   AV_CODEC_ID_MPEG2VIDEO, PROF_MPEG2_MAIN },
     { "MPEG-2 & MPEG-1 variable-length decoder",                                      &DXVA2_ModeMPEG2and1_VLD,               AV_CODEC_ID_MPEG2VIDEO, PROF_MPEG2_MAIN },
     { "MPEG-2 & MPEG-1 variable-length decoder",                                      &DXVA2_ModeMPEG2and1_VLD,               AV_CODEC_ID_MPEG1VIDEO, NULL },
     { "MPEG-2 motion compensation",                                                   &DXVA2_ModeMPEG2_MoComp,                0, NULL },
@@ -186,8 +190,8 @@ static const directx_va_mode_t DXVA_MODES[] = {
 
     /* H.264 http://www.microsoft.com/downloads/details.aspx?displaylang=en&FamilyID=3d1c290b-310b-4ea2-bf76-714063a6d7a6 */
     { "H.264 variable-length decoder, film grain technology",                         &DXVA2_ModeH264_F,                      AV_CODEC_ID_H264, PROF_H264_HIGH },
-    { "H.264 variable-length decoder, no film grain technology (Intel ClearVideo)",   &DXVA_Intel_H264_NoFGT_ClearVideo,      AV_CODEC_ID_H264, PROF_H264_HIGH },
     { "H.264 variable-length decoder, no film grain technology",                      &DXVA2_ModeH264_E,                      AV_CODEC_ID_H264, PROF_H264_HIGH },
+    { "H.264 variable-length decoder, no film grain technology (Intel ClearVideo)",   &DXVA_Intel_H264_NoFGT_ClearVideo,      AV_CODEC_ID_H264, PROF_H264_HIGH },
     { "H.264 variable-length decoder, no film grain technology, FMO/ASO",             &DXVA_ModeH264_VLD_WithFMOASO_NoFGT,    AV_CODEC_ID_H264, PROF_H264_HIGH },
     { "H.264 variable-length decoder, no film grain technology, Flash",               &DXVA_ModeH264_VLD_NoFGT_Flash,         AV_CODEC_ID_H264, PROF_H264_HIGH },
 
@@ -256,11 +260,12 @@ static const directx_va_mode_t DXVA_MODES[] = {
     /* VPx */
     { "VP8",                                                                          &DXVA_ModeVP8_VLD,                      0, NULL },
 #if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT( 57, 17, 100 ) && LIBAVCODEC_VERSION_MICRO >= 100
-    { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             AV_CODEC_ID_VP9, NULL },
+    { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             AV_CODEC_ID_VP9, PROF_VP9_MAIN },
+    { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       AV_CODEC_ID_VP9, PROF_VP9_10 },
 #else
     { "VP9 profile 0",                                                                &DXVA_ModeVP9_VLD_Profile0,             0, NULL },
-#endif
     { "VP9 profile 2",                                                                &DXVA_ModeVP9_VLD_10bit_Profile2,       0, NULL },
+#endif
     { "VP9 profile Intel",                                                            &DXVA_ModeVP9_VLD_Intel,                0, NULL },
 
     { NULL, NULL, 0, NULL }
@@ -341,21 +346,16 @@ void directx_va_Close(vlc_va_t *va, directx_sys_t *dx_sys)
 
 int directx_va_Open(vlc_va_t *va, directx_sys_t *dx_sys)
 {
-    if (va_pool_Open(va, &dx_sys->va_pool) != VLC_SUCCESS)
-        goto error;
-
-    return VLC_SUCCESS;
-
-error:
-    return VLC_EGENERIC;
+    return va_pool_Open(va, &dx_sys->va_pool);
 }
 
-static bool profile_supported(const directx_va_mode_t *mode, const es_format_t *fmt)
+static bool profile_supported(const directx_va_mode_t *mode, const es_format_t *fmt,
+                              const AVCodecContext *avctx)
 {
-    bool is_supported = mode->p_profiles == NULL || !mode->p_profiles[0];
+    bool is_supported = mode->p_profiles == NULL;
     if (!is_supported)
     {
-        int profile = fmt->i_profile;
+        int profile = fmt->i_profile >= 0 ? fmt->i_profile : avctx->profile;
         if (mode->codec == AV_CODEC_ID_H264)
         {
             uint8_t h264_profile;
@@ -420,10 +420,14 @@ static int FindVideoServiceConversion(vlc_va_t *va, directx_sys_t *dx_sys,
         }
         if ( is_supported )
         {
-            is_supported = profile_supported( mode, fmt );
+            is_supported = profile_supported( mode, fmt, avctx );
             if (!is_supported)
+            {
+                char *psz_name = directx_va_GetDecoderName(mode->guid);
                 msg_Warn( va, "Unsupported profile %d for %s ",
-                          fmt->i_profile, directx_va_GetDecoderName(mode->guid) );
+                          fmt->i_profile, psz_name );
+                free( psz_name );
+            }
         }
         if (!is_supported)
             continue;

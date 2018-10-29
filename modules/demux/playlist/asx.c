@@ -50,7 +50,7 @@
  *****************************************************************************/
 static int ReadDir( stream_t *, input_item_node_t * );
 
-static bool ParseTime(xml_reader_t *p_xml_reader, mtime_t* pi_result )
+static bool ParseTime(xml_reader_t *p_xml_reader, vlc_tick_t* pi_result )
 {
     assert( pi_result );
     char *psz_value = NULL;
@@ -62,7 +62,7 @@ static bool ParseTime(xml_reader_t *p_xml_reader, mtime_t* pi_result )
     int i_subfractions = -1;
 
     int i_subresult = 0;
-    mtime_t i_result = 0;
+    vlc_tick_t i_result = 0;
 
     do
     {
@@ -111,9 +111,9 @@ static bool ParseTime(xml_reader_t *p_xml_reader, mtime_t* pi_result )
         i_subresult = i_subresult * 10;
         i_subfractions++;
     }
-    i_result = i_result * 1000000;
+    i_result = i_result * CLOCK_FREQ;
     if( i_subfractions != -1)
-        i_result += i_subresult;
+        i_result += VLC_TICK_FROM_US( i_subresult );
 
     free( psz_start );
     *pi_result = i_result;
@@ -202,12 +202,13 @@ static void ProcessEntry( int *pi_n_entry, xml_reader_t *p_xml_reader,
     input_item_t *p_entry = NULL;
 
     int i_options;
-    mtime_t i_start = 0;
-    mtime_t i_duration = 0;
+    vlc_tick_t i_start = 0;
+    vlc_tick_t i_duration;
     char *ppsz_options[2];
 
     do
     {
+        i_duration = INPUT_DURATION_UNSET;
         i_type = xml_ReaderNextNode( p_xml_reader, &psz_node );
 
         if( i_type == XML_READER_ERROR || i_type == XML_READER_NONE )
@@ -296,13 +297,15 @@ static void ProcessEntry( int *pi_n_entry, xml_reader_t *p_xml_reader,
                 i_options = 0;
                 if( i_start )
                 {
-                    if( asprintf( ppsz_options, ":start-time=%d" ,(int) i_start/1000000 ) != -1)
+                    if( asprintf( ppsz_options, ":start-time=%"PRId64 ,
+                                  SEC_FROM_VLC_TICK(i_start) ) != -1)
                         i_options++;
                 }
                 if( i_duration)
                 {
-                    if( asprintf( ppsz_options + i_options, ":stop-time=%d",
-                                (int) (i_start+i_duration)/1000000 ) != -1)
+                    if( asprintf( ppsz_options + i_options,
+                                  ":stop-time=%"PRId64,
+                                  SEC_FROM_VLC_TICK(i_start + i_duration) ) != -1)
                         i_options++;
                 }
 

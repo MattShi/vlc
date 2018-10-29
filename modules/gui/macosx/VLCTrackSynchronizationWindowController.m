@@ -59,7 +59,7 @@
     [[_sv_speedTextField formatter] setFormat:[NSString stringWithFormat:@"#,##0.000 %@", _NS("fps")]];
     [_sv_durLabel setStringValue: _NS("Subtitle duration factor:")];
 
-    int i_mode = var_InheritInteger(getIntf(), SUBSDELAY_CFG_MODE);
+    int i_mode = (int)var_InheritInteger(getIntf(), SUBSDELAY_CFG_MODE);
     NSString * o_toolTip, * o_suffix;
 
     switch (i_mode) {
@@ -97,7 +97,7 @@
     if ([self.window isVisible])
         [self.window orderOut:sender];
     else {
-        [self.window setLevel: [[[VLCMain sharedInstance] voutController] currentStatusWindowLevel]];
+        [self.window setLevel: [[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
         [self.window makeKeyAndOrderFront:sender];
 
         [self updateValues];
@@ -118,8 +118,8 @@
     input_thread_t * p_input = pl_CurrentInput(getIntf());
 
     if (p_input) {
-        var_SetInteger(p_input, "audio-delay", 0.0);
-        var_SetInteger(p_input, "spu-delay", 0.0);
+        var_SetInteger(p_input, "audio-delay", 0);
+        var_SetInteger(p_input, "spu-delay", 0);
         var_SetFloat(p_input, "sub-fps", 1.0);
         [self svDurationValueChanged:nil];
         vlc_object_release(p_input);
@@ -131,8 +131,8 @@
     input_thread_t * p_input = pl_CurrentInput(getIntf());
 
     if (p_input) {
-        [_av_advanceTextField setDoubleValue: var_GetInteger(p_input, "audio-delay") / 1000000.];
-        [_sv_advanceTextField setDoubleValue: var_GetInteger(p_input, "spu-delay") / 1000000.];
+        [_av_advanceTextField setDoubleValue: secf_from_vlc_tick(var_GetInteger(p_input, "audio-delay"))];
+        [_sv_advanceTextField setDoubleValue: secf_from_vlc_tick(var_GetInteger(p_input, "spu-delay"))];
         [_sv_speedTextField setFloatValue: var_GetFloat(p_input, "sub-fps")];
         vlc_object_release(p_input);
     }
@@ -151,7 +151,7 @@
     input_thread_t * p_input = pl_CurrentInput(getIntf());
 
     if (p_input) {
-        var_SetInteger(p_input, "audio-delay", [_av_advanceTextField doubleValue] * 1000000.);
+        var_SetInteger(p_input, "audio-delay", vlc_tick_from_sec([_av_advanceTextField doubleValue]));
         vlc_object_release(p_input);
     }
 }
@@ -166,7 +166,7 @@
     input_thread_t * p_input = pl_CurrentInput(getIntf());
 
     if (p_input) {
-        var_SetInteger(p_input, "spu-delay", [_sv_advanceTextField doubleValue] * 1000000.);
+        var_SetInteger(p_input, "spu-delay", vlc_tick_from_sec([_sv_advanceTextField doubleValue]));
         vlc_object_release(p_input);
     }
 }

@@ -79,11 +79,13 @@ static const d3d_format_t d3d_formats[] = {
 #endif
     { "I420",     DXGI_FORMAT_UNKNOWN,        VLC_CODEC_I420,          8, 2, 2, { DXGI_FORMAT_R8_UNORM,      DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_UNORM } },
     { "I420_10",  DXGI_FORMAT_UNKNOWN,        VLC_CODEC_I420_10L,     10, 2, 2, { DXGI_FORMAT_R16_UNORM,     DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16_UNORM } },
+    { "YUVA",     DXGI_FORMAT_UNKNOWN,        VLC_CODEC_YUVA,          8, 1, 1, { DXGI_FORMAT_R8_UNORM,      DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8_UNORM } },
     { "B8G8R8A8", DXGI_FORMAT_B8G8R8A8_UNORM, VLC_CODEC_BGRA,          8, 1, 1, { DXGI_FORMAT_B8G8R8A8_UNORM } },
     { "VA_BGRA",  DXGI_FORMAT_B8G8R8A8_UNORM, VLC_CODEC_D3D11_OPAQUE_BGRA,  8, 1, 1, { DXGI_FORMAT_B8G8R8A8_UNORM } },
     { "R8G8B8A8", DXGI_FORMAT_R8G8B8A8_UNORM, VLC_CODEC_RGBA,          8, 1, 1, { DXGI_FORMAT_R8G8B8A8_UNORM } },
     { "VA_RGBA",  DXGI_FORMAT_R8G8B8A8_UNORM, VLC_CODEC_D3D11_OPAQUE_RGBA,  8, 1, 1, { DXGI_FORMAT_R8G8B8A8_UNORM } },
     { "R8G8B8X8", DXGI_FORMAT_B8G8R8X8_UNORM, VLC_CODEC_RGB32,         8, 1, 1, { DXGI_FORMAT_B8G8R8X8_UNORM } },
+    { "RGBA64",   DXGI_FORMAT_R16G16B16A16_UNORM, VLC_CODEC_RGBA64,   16, 1, 1, { DXGI_FORMAT_R16G16B16A16_UNORM } },
     { "RGB10A2",  DXGI_FORMAT_R10G10B10A2_UNORM, VLC_CODEC_RGBA10,    10, 1, 1, { DXGI_FORMAT_R10G10B10A2_UNORM } },
     { "VA_RGB10", DXGI_FORMAT_R10G10B10A2_UNORM, VLC_CODEC_D3D11_OPAQUE_RGBA, 10, 1, 1, { DXGI_FORMAT_R10G10B10A2_UNORM } },
     { "AYUV",     DXGI_FORMAT_AYUV,           VLC_CODEC_VUYA,          8, 1, 1, { DXGI_FORMAT_R8G8B8A8_UNORM } },
@@ -111,6 +113,16 @@ vlc_fourcc_t DxgiFormatFourcc(DXGI_FORMAT format)
             return f->vlc_format;
     }
     return 0;
+}
+
+DXGI_FORMAT DxgiFourccFormat(vlc_fourcc_t fcc)
+{
+    for (const dxgi_format_t *f = dxgi_formats; f->name != NULL; ++f)
+    {
+        if (f->vlc_format == fcc)
+            return f->format;
+    }
+    return DXGI_FORMAT_UNKNOWN;
 }
 
 const d3d_format_t *GetRenderFormatList(void)

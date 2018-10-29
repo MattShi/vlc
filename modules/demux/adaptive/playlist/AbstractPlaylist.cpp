@@ -41,7 +41,7 @@ AbstractPlaylist::AbstractPlaylist (vlc_object_t *p_object_) :
     availabilityStartTime.Set( 0 );
     availabilityEndTime.Set( 0 );
     duration.Set( 0 );
-    minUpdatePeriod.Set( 2 * CLOCK_FREQ );
+    minUpdatePeriod.Set( VLC_TICK_FROM_SEC(2) );
     maxSegmentDuration.Set( 0 );
     minBufferTime = 0;
     timeShiftBufferDepth.Set( 0 );
@@ -79,20 +79,20 @@ void AbstractPlaylist::setType(const std::string &type_)
     type = type_;
 }
 
-void AbstractPlaylist::setMinBuffering( mtime_t min )
+void AbstractPlaylist::setMinBuffering( vlc_tick_t min )
 {
     minBufferTime = min;
 }
 
-mtime_t AbstractPlaylist::getMinBuffering() const
+vlc_tick_t AbstractPlaylist::getMinBuffering() const
 {
-    return std::max(minBufferTime, 6*CLOCK_FREQ);
+    return std::max(minBufferTime, VLC_TICK_FROM_SEC(6));
 }
 
-mtime_t AbstractPlaylist::getMaxBuffering() const
+vlc_tick_t AbstractPlaylist::getMaxBuffering() const
 {
-    const mtime_t minbuf = getMinBuffering();
-    return std::max(minbuf, 60 * CLOCK_FREQ);
+    const vlc_tick_t minbuf = getMinBuffering();
+    return std::max(minbuf, VLC_TICK_FROM_SEC(60));
 }
 
 Url AbstractPlaylist::getUrlSegment() const
@@ -136,7 +136,7 @@ BasePeriod* AbstractPlaylist::getNextPeriod(BasePeriod *period)
     return NULL;
 }
 
-void AbstractPlaylist::mergeWith(AbstractPlaylist *updatedAbstractPlaylist, mtime_t prunebarrier)
+void AbstractPlaylist::mergeWith(AbstractPlaylist *updatedAbstractPlaylist, vlc_tick_t prunebarrier)
 {
     availabilityEndTime.Set(updatedAbstractPlaylist->availabilityEndTime.Get());
 
@@ -144,7 +144,7 @@ void AbstractPlaylist::mergeWith(AbstractPlaylist *updatedAbstractPlaylist, mtim
         periods.at(i)->mergeWith(updatedAbstractPlaylist->periods.at(i), prunebarrier);
 }
 
-void AbstractPlaylist::pruneByPlaybackTime(mtime_t time)
+void AbstractPlaylist::pruneByPlaybackTime(vlc_tick_t time)
 {
     for(size_t i = 0; i < periods.size(); i++)
         periods.at(i)->pruneByPlaybackTime(time);

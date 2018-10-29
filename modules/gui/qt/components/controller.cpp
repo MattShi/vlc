@@ -26,8 +26,6 @@
 # include "config.h"
 #endif
 
-#include <vlc_vout.h>                       /* vout_thread_t for FSC */
-
 /* Widgets */
 #include "components/controller.hpp"
 #include "components/controller_widget.hpp"
@@ -350,14 +348,14 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         }
         break;
     case INPUT_SLIDER: {
-        SeekSlider *slider = new SeekSlider( Qt::Horizontal, NULL, !b_shiny );
+        SeekSlider *slider = new SeekSlider( p_intf, Qt::Horizontal, NULL, !b_shiny );
         SeekPoints *chapters = new SeekPoints( this, p_intf );
         CONNECT( THEMIM->getIM(), chapterChanged( bool ), chapters, update() );
         slider->setChapters( chapters );
 
         /* Update the position when the IM has changed */
-        CONNECT( THEMIM->getIM(), positionUpdated( float, int64_t, int ),
-                slider, setPosition( float, int64_t, int ) );
+        CONNECT( THEMIM->getIM(), positionUpdated( float, vlc_tick_t, int ),
+                slider, setPosition( float, vlc_tick_t, int ) );
         /* And update the IM, when the position has changed */
         CONNECT( slider, sliderDragged( float ),
                  THEMIM->getIM(), sliderUpdate( float ) );
@@ -378,6 +376,7 @@ QWidget *AbstractController::createWidget( buttonType_e button, int options )
         break;
     case VOLUME_SPECIAL:
         b_special = true;
+        /* fallthrough */
     case VOLUME:
         {
             SoundWidget *snd = new SoundWidget( this, p_intf, b_shiny, b_special );
@@ -793,10 +792,8 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
     b_mouse_over        = false;
     i_mouse_last_move_x = -1;
     i_mouse_last_move_y = -1;
-#if HAVE_TRANSPARENCY
     b_slow_hide_begin   = false;
     i_slow_hide_timeout = 1;
-#endif
     b_fullscreen        = false;
     i_hide_timeout      = 1;
     i_screennumber      = -1;
@@ -807,7 +804,8 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
 
     vout.clear();
 
-    setWindowFlags( Qt::ToolTip );
+    setWindowFlags( Qt::Tool | Qt::FramelessWindowHint );
+    setAttribute( Qt::WA_ShowWithoutActivating );
     setMinimumWidth( FSC_WIDTH );
     isWideFSC = false;
 
@@ -833,11 +831,9 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
     CONNECT( p_hideTimer, timeout(), this, hideFSC() );
 
     /* slow hiding timer */
-#if HAVE_TRANSPARENCY
     p_slowHideTimer = new QTimer( this );
     CONNECT( p_slowHideTimer, timeout(), this, slowHideFSC() );
     f_opacity = var_InheritFloat( p_intf, "qt-fs-opacity" );
-#endif
 
     i_sensitivity = var_InheritInteger( p_intf, "qt-fs-sensitivity" );
 
@@ -850,7 +846,6 @@ FullscreenControllerWidget::FullscreenControllerWidget( intf_thread_t *_p_i, QWi
     previousPosition = getSettings()->value( "FullScreen/pos" ).toPoint();
     screenRes = getSettings()->value( "FullScreen/screen" ).toRect();
     isWideFSC = getSettings()->value( "FullScreen/wide" ).toBool();
-    i_screennumber = -1;
 
     CONNECT( this, fullscreenChanged( bool ), THEMIM, changeFullscreen( bool ) );
 }
@@ -889,7 +884,7 @@ void FullscreenControllerWidget::restoreFSC()
         }
 
         if( currentRes == screenRes &&
-            QApplication::desktop()->screen()->geometry().contains( previousPosition, true ) )
+            currentRes.contains( previousPosition, true ) )
         {
             /* Restore to the last known position */
             move( previousPosition );
@@ -927,9 +922,7 @@ void FullscreenControllerWidget::showFSC()
 {
     restoreFSC();
 
-#if HAVE_TRANSPARENCY
     setWindowOpacity( f_opacity );
-#endif
 
     show();
 }
@@ -945,11 +938,9 @@ void FullscreenControllerWidget::planHideFSC()
 
     p_hideTimer->start( i_timeout );
 
-#if HAVE_TRANSPARENCY
     b_slow_hide_begin = true;
     i_slow_hide_timeout = i_timeout;
     p_slowHideTimer->start( i_slow_hide_timeout / 2 );
-#endif
 }
 
 /**
@@ -959,7 +950,6 @@ void FullscreenControllerWidget::planHideFSC()
  */
 void FullscreenControllerWidget::slowHideFSC()
 {
-#if HAVE_TRANSPARENCY
     if( b_slow_hide_begin )
     {
         b_slow_hide_begin = false;
@@ -981,7 +971,6 @@ void FullscreenControllerWidget::slowHideFSC()
          if ( windowOpacity() <= 0.0 )
              p_slowHideTimer->stop();
     }
-#endif
 }
 
 void FullscreenControllerWidget::updateFullwidthGeometry( int number )
@@ -1047,7 +1036,7 @@ void FullscreenControllerWidget::customEvent( QEvent *event )
             b_fs = b_fullscreen;
             vlc_mutex_unlock( &lock );
 
-            if( b_fs )
+            if( b_fs && ( isHidden() || p_slowHideTimer->isActive() ) )
                 showFSC();
 
             break;
@@ -1117,10 +1106,8 @@ void FullscreenControllerWidget::enterEvent( QEvent *event )
     b_mouse_over = true;
 
     p_hideTimer->stop();
-#if HAVE_TRANSPARENCY
     p_slowHideTimer->stop();
     setWindowOpacity( f_opacity );
-#endif
     event->accept();
 }
 
@@ -1223,7 +1210,7 @@ void FullscreenControllerWidget::setVoutList( vout_thread_t **pp_vout, int i_vou
         var_AddCallback( p_vout, "fullscreen",
                          FullscreenControllerWidget::FullscreenChanged, this );
         /* I miss a add and fire */
-        emit fullscreenChanged( p_vout, var_InheritBool( THEPL, "fullscreen" ),
+        emit fullscreenChanged( p_vout, var_InheritBool( p_vout, "fullscreen" ),
                            var_GetInteger( p_vout, "mouse-hide-timeout" ) );
         vlc_mutex_unlock( &lock );
     }

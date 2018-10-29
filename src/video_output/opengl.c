@@ -23,10 +23,10 @@
 #endif
 
 #include <assert.h>
-#include <stdatomic.h>
 #include <stdlib.h>
 
 #include <vlc_common.h>
+#include <vlc_atomic.h>
 #include <vlc_opengl.h>
 #include "libvlc.h"
 #include <vlc_modules.h>
@@ -34,7 +34,7 @@
 struct vlc_gl_priv_t
 {
     vlc_gl_t gl;
-    atomic_uint ref_count;
+    vlc_atomic_rc_t rc;
 };
 #undef vlc_gl_Create
 /**
@@ -70,14 +70,17 @@ vlc_gl_t *vlc_gl_Create(struct vout_window_t *wnd, unsigned flags,
     if (unlikely(glpriv == NULL))
         return NULL;
 
-    glpriv->gl.surface = wnd;
-    glpriv->gl.module = module_need(&glpriv->gl, type, name, true);
-    if (glpriv->gl.module == NULL)
+    vlc_gl_t *gl = &glpriv->gl;
+    gl->surface = wnd;
+    gl->module = module_need(gl, type, name, true);
+    if (gl->module == NULL)
     {
-        vlc_object_release(&glpriv->gl);
+        vlc_object_release(gl);
         return NULL;
     }
-    atomic_init(&glpriv->ref_count, 1);
+    assert(gl->makeCurrent && gl->releaseCurrent && gl->swap
+        && gl->getProcAddress);
+    vlc_atomic_rc_init(&glpriv->rc);
 
     return &glpriv->gl;
 }
@@ -85,13 +88,13 @@ vlc_gl_t *vlc_gl_Create(struct vout_window_t *wnd, unsigned flags,
 void vlc_gl_Hold(vlc_gl_t *gl)
 {
     struct vlc_gl_priv_t *glpriv = (struct vlc_gl_priv_t *)gl;
-    atomic_fetch_add(&glpriv->ref_count, 1);
+    vlc_atomic_rc_inc(&glpriv->rc);
 }
 
 void vlc_gl_Release(vlc_gl_t *gl)
 {
     struct vlc_gl_priv_t *glpriv = (struct vlc_gl_priv_t *)gl;
-    if (atomic_fetch_sub(&glpriv->ref_count, 1) != 1)
+    if (!vlc_atomic_rc_dec(&glpriv->rc))
         return;
     module_unneed(gl, gl->module);
     vlc_object_release(gl);
@@ -131,9 +134,12 @@ vlc_gl_t *vlc_gl_surface_Create(vlc_object_t *obj,
     sys->height = cfg->height;
     vlc_mutex_init(&sys->lock);
 
-    vout_window_owner_t owner = {
-        .sys = sys,
+    static const struct vout_window_callbacks cbs = {
         .resized = vlc_gl_surface_ResizeNotify,
+    };
+    vout_window_owner_t owner = {
+        .cbs = &cbs,
+        .sys = sys,
     };
     char *modlist = var_InheritString(obj, "window");
 
@@ -148,7 +154,7 @@ vlc_gl_t *vlc_gl_surface_Create(vlc_object_t *obj,
     vlc_gl_t *gl = vlc_gl_Create(surface, VLC_OPENGL, NULL);
     if (gl == NULL) {
         vout_window_Delete(surface);
-        return NULL;
+        goto error;
     }
 
     vlc_gl_Resize(gl, cfg->width, cfg->height);

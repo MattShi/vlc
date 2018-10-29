@@ -28,6 +28,7 @@
 #import "VLCMainMenu.h"
 #import "VLCPlaylist.h"
 #import "CompatibilityFixes.h"
+#import "NSString+Helpers.h"
 
 /*****************************************************************************
  * VLCControlsBarCommon
@@ -56,85 +57,58 @@
 {
     [super awakeFromNib];
     
-    _darkInterface = var_InheritBool(getIntf(), "macosx-interfacestyle");
     _nativeFullscreenMode = var_InheritBool(getIntf(), "macosx-nativefullscreenmode");
 
     [self.dropView setDrawBorder: NO];
 
     [self.playButton setToolTip: _NS("Play")];
-    [[self.playButton cell] accessibilitySetOverrideValue:[self.playButton toolTip] forAttribute:NSAccessibilityDescriptionAttribute];
+    self.playButton.accessibilityLabel = self.playButton.toolTip;
 
     [self.backwardButton setToolTip: _NS("Backward")];
-    [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Seek backward") forAttribute:NSAccessibilityDescriptionAttribute];
-    [[self.backwardButton cell] accessibilitySetOverrideValue:[self.backwardButton toolTip] forAttribute:NSAccessibilityTitleAttribute];
+    self.backwardButton.accessibilityLabel = _NS("Seek backward");
+    self.backwardButton.accessibilityTitle = self.backwardButton.toolTip;
 
     [self.forwardButton setToolTip: _NS("Forward")];
-    [[self.forwardButton cell] accessibilitySetOverrideValue:_NS("Seek forward") forAttribute:NSAccessibilityDescriptionAttribute];
-    [[self.forwardButton cell] accessibilitySetOverrideValue:[self.forwardButton toolTip] forAttribute:NSAccessibilityTitleAttribute];
+    self.forwardButton.accessibilityLabel = _NS("Seek forward");
+    self.forwardButton.accessibilityTitle = self.forwardButton.toolTip;
 
     [self.timeSlider setToolTip: _NS("Position")];
-    [[self.timeSlider cell] accessibilitySetOverrideValue:_NS("Playback position") forAttribute:NSAccessibilityDescriptionAttribute];
-    [[self.timeSlider cell] accessibilitySetOverrideValue:[self.timeSlider toolTip] forAttribute:NSAccessibilityTitleAttribute];
-    if (_darkInterface)
-        [self.timeSlider setSliderStyleDark];
+    self.timeSlider.accessibilityLabel = _NS("Playback position");
+    self.timeSlider.accessibilityTitle = self.timeSlider.toolTip;
 
-    [self.fullscreenButton setToolTip: _NS("Fullscreen")];
-    [[self.fullscreenButton cell] accessibilitySetOverrideValue:[self.fullscreenButton toolTip] forAttribute:NSAccessibilityDescriptionAttribute];
+    [self.fullscreenButton setToolTip: _NS("Enter fullscreen")];
+    self.fullscreenButton.accessibilityLabel = self.fullscreenButton.toolTip;
 
-    if (!_darkInterface) {
-        [self.bottomBarView setDark:NO];
+    [self.backwardButton setImage: imageFromRes(@"backward-3btns")];
+    [self.backwardButton setAlternateImage: imageFromRes(@"backward-3btns-pressed")];
+    _playImage = imageFromRes(@"play");
+    _pressedPlayImage = imageFromRes(@"play-pressed");
+    _pauseImage = imageFromRes(@"pause");
+    _pressedPauseImage = imageFromRes(@"pause-pressed");
+    [self.forwardButton setImage: imageFromRes(@"forward-3btns")];
+    [self.forwardButton setAlternateImage: imageFromRes(@"forward-3btns-pressed")];
 
-        [self.backwardButton setImage: imageFromRes(@"backward-3btns")];
-        [self.backwardButton setAlternateImage: imageFromRes(@"backward-3btns-pressed")];
-        _playImage = imageFromRes(@"play");
-        _pressedPlayImage = imageFromRes(@"play-pressed");
-        _pauseImage = imageFromRes(@"pause");
-        _pressedPauseImage = imageFromRes(@"pause-pressed");
-        [self.forwardButton setImage: imageFromRes(@"forward-3btns")];
-        [self.forwardButton setAlternateImage: imageFromRes(@"forward-3btns-pressed")];
-
-        [self.fullscreenButton setImage: imageFromRes(@"fullscreen-one-button")];
-        [self.fullscreenButton setAlternateImage: imageFromRes(@"fullscreen-one-button-pressed")];
-    } else {
-        [self.bottomBarView setDark:YES];
-
-        [self.backwardButton setImage: imageFromRes(@"backward-3btns-dark")];
-        [self.backwardButton setAlternateImage: imageFromRes(@"backward-3btns-dark-pressed")];
-        _playImage = imageFromRes(@"play_dark");
-        _pressedPlayImage = imageFromRes(@"play-pressed_dark");
-        _pauseImage = imageFromRes(@"pause_dark");
-        _pressedPauseImage = imageFromRes(@"pause-pressed_dark");
-        [self.forwardButton setImage: imageFromRes(@"forward-3btns-dark")];
-        [self.forwardButton setAlternateImage: imageFromRes(@"forward-3btns-dark-pressed")];
-
-        [self.fullscreenButton setImage: imageFromRes(@"fullscreen-one-button-pressed_dark")];
-        [self.fullscreenButton setAlternateImage: imageFromRes(@"fullscreen-one-button-pressed_dark")];
-    }
+    [self.fullscreenButton setImage: imageFromRes(@"fullscreen-one-button")];
+    [self.fullscreenButton setAlternateImage: imageFromRes(@"fullscreen-one-button-pressed")];
 
     [self.playButton setImage: _playImage];
     [self.playButton setAlternateImage: _pressedPlayImage];
 
-    NSColor *timeFieldTextColor;
-    if (!var_InheritBool(getIntf(), "macosx-interfacestyle"))
-        timeFieldTextColor = [NSColor colorWithCalibratedRed:0.229 green:0.229 blue:0.229 alpha:100.0];
-    else
-        timeFieldTextColor = [NSColor colorWithCalibratedRed:0.64 green:0.64 blue:0.64 alpha:100.0];
+    NSColor *timeFieldTextColor = [NSColor colorWithCalibratedRed:0.64 green:0.64 blue:0.64 alpha:100.0];
     [self.timeField setTextColor: timeFieldTextColor];
     [self.timeField setFont:[NSFont titleBarFontOfSize:10.0]];
     [self.timeField setAlignment: NSCenterTextAlignment];
     [self.timeField setNeedsDisplay:YES];
     [self.timeField setRemainingIdentifier:@"DisplayTimeAsTimeRemaining"];
-    [[self.timeField cell] accessibilitySetOverrideValue:_NS("Playback time")
-                                            forAttribute:NSAccessibilityDescriptionAttribute];
+    self.timeField.accessibilityLabel = _NS("Playback time");
 
     // remove fullscreen button for lion fullscreen
     if (_nativeFullscreenMode) {
         self.fullscreenButtonWidthConstraint.constant = 0;
     }
 
-    if (config_GetInt(getIntf(), "macosx-show-playback-buttons"))
+    if (config_GetInt("macosx-show-playback-buttons"))
         [self toggleForwardBackwardMode: YES];
-
 }
 
 - (CGFloat)height
@@ -146,22 +120,22 @@
 {
     if (b_alt == YES) {
         /* change the accessibility help for the backward/forward buttons accordingly */
-        [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Backward") forAttribute:NSAccessibilityTitleAttribute];
-        [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Seek backward") forAttribute:NSAccessibilityDescriptionAttribute];
+        self.backwardButton.accessibilityTitle = _NS("Backward");
+        self.backwardButton.accessibilityLabel = _NS("Seek backward");
 
-        [[self.forwardButton cell] accessibilitySetOverrideValue:_NS("Forward") forAttribute:NSAccessibilityTitleAttribute];
-        [[self.forwardButton cell] accessibilitySetOverrideValue:_NS("Seek forward") forAttribute:NSAccessibilityDescriptionAttribute];
+        self.forwardButton.accessibilityTitle = _NS("Forward");
+        self.forwardButton.accessibilityLabel = _NS("Seek forward");
 
         [self.forwardButton setAction:@selector(alternateForward:)];
         [self.backwardButton setAction:@selector(alternateBackward:)];
 
     } else {
         /* change the accessibility help for the backward/forward buttons accordingly */
-        [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Previous") forAttribute:NSAccessibilityTitleAttribute];
-        [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Go to previous item") forAttribute:NSAccessibilityDescriptionAttribute];
+        self.backwardButton.accessibilityTitle = _NS("Previous");
+        self.backwardButton.accessibilityLabel = _NS("Go to previous item");
 
-        [[self.backwardButton cell] accessibilitySetOverrideValue:_NS("Next") forAttribute:NSAccessibilityTitleAttribute];
-        [[self.forwardButton cell] accessibilitySetOverrideValue:_NS("Go to next item") forAttribute:NSAccessibilityDescriptionAttribute];
+        self.forwardButton.accessibilityTitle = _NS("Next");
+        self.forwardButton.accessibilityLabel = _NS("Go to next item");
 
         [self.forwardButton setAction:@selector(fwd:)];
         [self.backwardButton setAction:@selector(bwd:)];
@@ -276,6 +250,9 @@
         case NSLeftMouseDragged:
             f_updated = [sender floatValue];
             break;
+        case NSScrollWheel:
+            f_updated = [sender floatValue];
+            break;
 
         default:
             return;
@@ -289,7 +266,8 @@
         var_Set(p_input, "position", pos);
         [self.timeSlider setFloatValue: f_updated];
 
-        o_time = [[VLCStringUtility sharedInstance] getCurrentTimeAsString: p_input negative:[self.timeField timeRemaining]];
+        o_time = [NSString stringWithTimeFromInput:p_input
+                                          negative:self.timeField.timeRemaining];
         [self.timeField setStringValue: o_time];
         vlc_object_release(p_input);
     }
@@ -326,18 +304,18 @@
     var_Get(p_input, "position", &pos);
     [self.timeSlider setFloatValue:(10000. * pos.f_float)];
 
-    mtime_t dur = input_item_GetDuration(input_GetItem(p_input));
+    vlc_tick_t dur = input_item_GetDuration(input_GetItem(p_input));
     if (dur == -1) {
         // No duration, disable slider
         [self.timeSlider setEnabled:NO];
     } else {
-        input_state_e inputState = input_GetState(p_input);
+        input_state_e inputState = var_GetInteger(p_input, "state");
         bool buffering = (inputState == INIT_S || inputState == OPENING_S);
         [self.timeSlider setIndefinite:buffering];
     }
 
-    NSString *time = [[VLCStringUtility sharedInstance] getCurrentTimeAsString:p_input
-                                                                      negative:[self.timeField timeRemaining]];
+    NSString *time = [NSString stringWithTimeFromInput:p_input
+                                              negative:self.timeField.timeRemaining];
     [self.timeField setStringValue:time];
     [self.timeField setNeedsDisplay:YES];
 
@@ -349,7 +327,6 @@
     bool b_plmul = false;
     bool b_seekable = false;
     bool b_chapters = false;
-    bool b_buffering = false;
 
     playlist_t * p_playlist = pl_Get(getIntf());
 
@@ -360,10 +337,6 @@
     input_thread_t * p_input = playlist_CurrentInput(p_playlist);
 
     if (p_input) {
-        input_state_e inputState = input_GetState(p_input);
-        if (inputState == INIT_S || inputState == OPENING_S)
-            b_buffering = YES;
-
         /* seekable streams */
         b_seekable = var_GetBool(p_input, "can-seek");
 
@@ -384,7 +357,7 @@
     [self.playButton setImage: _pauseImage];
     [self.playButton setAlternateImage: _pressedPauseImage];
     [self.playButton setToolTip: _NS("Pause")];
-    [[self.playButton cell] accessibilitySetOverrideValue:[self.playButton toolTip] forAttribute:NSAccessibilityTitleAttribute];
+    self.playButton.accessibilityLabel = self.playButton.toolTip;
 }
 
 - (void)setPlay
@@ -392,7 +365,7 @@
     [self.playButton setImage: _playImage];
     [self.playButton setAlternateImage: _pressedPlayImage];
     [self.playButton setToolTip: _NS("Play")];
-    [[self.playButton cell] accessibilitySetOverrideValue:[self.playButton toolTip] forAttribute:NSAccessibilityTitleAttribute];
+    self.playButton.accessibilityLabel = self.playButton.toolTip;
 }
 
 - (void)setFullscreenState:(BOOL)b_fullscreen

@@ -29,7 +29,9 @@
 #include <string.h>
 
 #include <sys/types.h>
+#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
+#endif
 #include <poll.h>
 
 #include <vlc_common.h>
@@ -190,7 +192,7 @@ int main(void)
 
     iov.iov_base = buf;
     iov.iov_len = sizeof (buf);
-    val = tls->readv(tls, &iov, 1);
+    val = tls->ops->readv(tls, &iov, 1);
     assert(val == -1 && errno == EAGAIN);
 
     val = vlc_tls_Write(tls, "Hello ", 6);
@@ -228,7 +230,7 @@ int main(void)
             data[i] = rand_r(&seed);
         bytes += sizeof (data);
     }
-    while ((val = tls->writev(tls, &iov, 1)) == sizeof (data));
+    while ((val = tls->ops->writev(tls, &iov, 1)) == sizeof (data));
 
     bytes -= sizeof (data);
     if (val > 0)

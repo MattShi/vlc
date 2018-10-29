@@ -78,11 +78,10 @@ struct vout_display_sys_t
 };
 
 static picture_pool_t *Pool  (vout_display_t *, unsigned);
-static void           Display(vout_display_t *, picture_t *, subpicture_t *subpicture);
+static void           Display(vout_display_t *, picture_t *);
 static int            Control(vout_display_t *, int, va_list);
-static void           Manage (vout_display_t *);
 
-static int            Init(vout_display_t *, video_format_t *, int, int);
+static int            Init(vout_display_t *, video_format_t *);
 static void           Clean(vout_display_t *);
 
 /* */
@@ -103,7 +102,7 @@ static int Open(vlc_object_t *object)
 
     /* */
     video_format_t fmt = vd->fmt;
-    if (Init(vd, &fmt, fmt.i_width, fmt.i_height))
+    if (Init(vd, &fmt))
         goto error;
 
     vout_display_info_t info = vd->info;
@@ -118,7 +117,6 @@ static int Open(vlc_object_t *object)
     vd->pool    = Pool;
     vd->prepare = NULL;
     vd->display = Display;
-    vd->manage  = Manage;
     vd->control = Control;
     return VLC_SUCCESS;
 
@@ -146,9 +144,10 @@ static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
     return vd->sys->sys.pool;
 }
 
-static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
+static void Display(vout_display_t *vd, picture_t *picture)
 {
     vout_display_sys_t *sys = vd->sys;
+    VLC_UNUSED(picture);
 
 #define rect_src vd->sys->rect_src
 #define rect_src_clipped vd->sys->sys.rect_src_clipped
@@ -183,11 +182,9 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
 #undef rect_src_clipped
 #undef rect_dest
 #undef rect_dest_clipped
-    /* TODO */
-    picture_Release(picture);
-    VLC_UNUSED(subpicture);
 
     CommonDisplay(vd);
+    CommonManage(vd);
 }
 
 static int Control(vout_display_t *vd, int query, va_list args)
@@ -202,13 +199,7 @@ static int Control(vout_display_t *vd, int query, va_list args)
 
 }
 
-static void Manage(vout_display_t *vd)
-{
-    CommonManage(vd);
-}
-
-static int Init(vout_display_t *vd,
-                video_format_t *fmt, int width, int height)
+static int Init(vout_display_t *vd, video_format_t *fmt)
 {
     vout_display_sys_t *sys = vd->sys;
 
@@ -262,8 +253,6 @@ static int Init(vout_display_t *vd,
         msg_Err(vd, "screen depth %i not supported", sys->i_depth);
         return VLC_EGENERIC;
     }
-    fmt->i_width  = width;
-    fmt->i_height = height;
 
     void *p_pic_buffer;
     int     i_pic_pitch;

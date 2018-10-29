@@ -83,7 +83,7 @@ enum {
   UPDATE_REQUEST
 }; /* FIXME Temporary. Updating by compound urls string to be removed later. */
 
-struct services_discovery_sys_t
+typedef struct
 {
     /* playlist node */
     input_thread_t **pp_input;
@@ -102,7 +102,7 @@ struct services_discovery_sys_t
     bool b_savedurls_loaded;
     char *psz_request;
     int update_type;
-};
+} services_discovery_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -184,16 +184,16 @@ static void Close( vlc_object_t *p_this )
 
     for( int i = 0; i < p_sys->i_input; i++ )
     {
-        input_thread_t *p_input = p_sd->p_sys->pp_input[i];
+        input_thread_t *p_input = p_sys->pp_input[i];
         if( !p_input )
             continue;
 
         input_Stop( p_input );
         input_Close( p_input );
 
-        p_sd->p_sys->pp_input[i] = NULL;
+        p_sys->pp_input[i] = NULL;
     }
-    free( p_sd->p_sys->pp_input );
+    free( p_sys->pp_input );
 
     for( int i = 0; i < p_sys->i_urls; i++ )
          free( p_sys->ppsz_urls[i] );
@@ -210,6 +210,19 @@ static void Close( vlc_object_t *p_this )
 /*****************************************************************************
  * Run: main thread
  *****************************************************************************/
+static input_thread_t *InputCreateAndStart( services_discovery_t *sd,
+                                            input_item_t *item )
+{
+    input_thread_t *input = input_Create( sd, input_LegacyEvents, NULL, item, NULL, NULL, NULL );
+    if( input != NULL && input_Start( input ) )
+    {
+        input_LegacyVarInit( input );
+        vlc_object_release( input );
+        input = NULL;
+    }
+    return input;
+}
+
 noreturn static void *Run( void *data )
 {
     services_discovery_t *p_sd = data;
@@ -237,9 +250,9 @@ noreturn static void *Run( void *data )
 
         p_sys->b_update = false;
 
-        for( int i = 0; i < p_sd->p_sys->i_input; i++ )
+        for( int i = 0; i < p_sys->i_input; i++ )
         {
-            input_thread_t *p_input = p_sd->p_sys->pp_input[i];
+            input_thread_t *p_input = p_sys->pp_input[i];
             int state = var_GetInteger( p_input, "state" );
 
             if( state == END_S || state == ERROR_S )
@@ -247,7 +260,7 @@ noreturn static void *Run( void *data )
                 input_Stop( p_input );
                 input_Close( p_input );
 
-                p_sd->p_sys->pp_input[i] = NULL;
+                p_sys->pp_input[i] = NULL;
                 TAB_ERASE(p_sys->i_input, p_sys->pp_input, i);
                 i--;
             }
@@ -329,7 +342,7 @@ static void ParseUrls( services_discovery_t *p_sd, char *psz_urls )
             services_discovery_AddItem( p_sd, p_input );
 
             TAB_APPEND( p_sys->i_input, p_sys->pp_input,
-                         input_CreateAndStart( p_sd, p_input, NULL ) );
+                         InputCreateAndStart( p_sd, p_input ) );
         }
         else
         {
@@ -404,7 +417,7 @@ static void ParseRequest( services_discovery_t *p_sd )
             services_discovery_AddItem( p_sd, p_input );
 
             TAB_APPEND( p_sys->i_input, p_sys->pp_input,
-                        input_CreateAndStart( p_sd, p_input, NULL ) );
+                        InputCreateAndStart( p_sd, p_input ) );
             SaveUrls( p_sd );
         }
     }
@@ -445,7 +458,7 @@ static void SaveUrls( services_discovery_t *p_sd )
         if( i < p_sys->i_urls - 1 ) strcat( psz_urls, "|" );
     }
 
-    config_PutPsz( p_sd, "podcast-urls", psz_urls );
+    config_PutPsz( "podcast-urls", psz_urls );
 
     free( psz_urls );
 }

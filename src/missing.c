@@ -140,7 +140,7 @@ void sout_MuxDeleteStream (sout_mux_t *mux, sout_input_t *input)
     vlc_assert_unreachable ();
 }
 
-int sout_MuxGetStream (sout_mux_t *p_mux, unsigned int i_blocks, mtime_t *pi_dts)
+int sout_MuxGetStream (sout_mux_t *p_mux, unsigned int i_blocks, vlc_tick_t *pi_dts)
 {
     VLC_UNUSED (p_mux); VLC_UNUSED (i_blocks); VLC_UNUSED (pi_dts);
     vlc_assert_unreachable ();
@@ -241,9 +241,10 @@ vlm_message_t *vlm_MessageNew (const char *a, const char *fmt, ...)
 }
 
 #undef vlm_New
-vlm_t *vlm_New (vlc_object_t *obj)
+vlm_t *vlm_New (libvlc_int_t *obj, const char *file)
 {
      msg_Err (obj, "VLM not compiled-in!");
+     (void) file;
      return NULL;
 }
 #endif /* !ENABLE_VLM */

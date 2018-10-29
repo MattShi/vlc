@@ -62,21 +62,25 @@ extern "C" char **environ;
 
 #include <vlc_plugin.h>
 #include <vlc_vout_window.h>
-#ifndef X_DISPLAY_MISSING
-# include <vlc_xlib.h>
-#endif
 
-#ifdef _WIN32 /* For static builds */
+#ifdef QT_STATIC /* For static builds */
  #include <QtPlugin>
 
  #ifdef QT_STATICPLUGIN
-  Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
   Q_IMPORT_PLUGIN(QSvgIconPlugin)
   Q_IMPORT_PLUGIN(QSvgPlugin)
   #if !HAS_QT56
    Q_IMPORT_PLUGIN(AccessibleFactory)
   #endif
+  #ifdef _WIN32
+   Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin)
+   Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin)
+  #endif
  #endif
+#endif
+
+#ifndef X_DISPLAY_MISSING
+# include <vlc_xlib.h>
 #endif
 
 /*****************************************************************************
@@ -381,33 +385,25 @@ static int Open( vlc_object_t *p_this, bool isDialogProvider )
 
 #if (_POSIX_SPAWN >= 0)
     /* Check if QApplication works */
-    char *libdir = config_GetLibDir();
-    if (likely(libdir != NULL))
+    char *path = config_GetSysPath(VLC_PKG_LIBEXEC_DIR, "vlc-qt-check");
+    if (unlikely(path == NULL))
+        return VLC_ENOMEM;
+
+    char *argv[] = { path, NULL };
+    pid_t pid;
+
+    int val = posix_spawn(&pid, path, NULL, NULL, argv, environ);
+    free(path);
+    if (val)
+        return VLC_ENOMEM;
+
+    int status;
+    while (waitpid(pid, &status, 0) == -1);
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     {
-        char *path;
-
-        if (unlikely(asprintf(&path, "%s/vlc-qt-check", libdir) < 0))
-            path = NULL;
-        free(libdir);
-        if (unlikely(path == NULL))
-            return VLC_ENOMEM;
-
-        char *argv[] = { path, NULL };
-        pid_t pid;
-
-        int val = posix_spawn(&pid, path, NULL, NULL, argv, environ);
-        free(path);
-        if (val)
-            return VLC_ENOMEM;
-
-        int status;
-        while (waitpid(pid, &status, 0) == -1);
-
-        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
-        {
-            msg_Dbg(p_this, "Qt check failed (%d). Skipping.", status);
-            return VLC_EGENERIC;
-        }
+        msg_Dbg(p_this, "Qt check failed (%d). Skipping.", status);
+        return VLC_EGENERIC;
     }
 #endif
 
@@ -435,7 +431,7 @@ static int Open( vlc_object_t *p_this, bool isDialogProvider )
 #ifdef Q_OS_MAC
     /* Run mainloop on the main thread as Cocoa requires */
     libvlc_SetExitHandler( p_intf->obj.libvlc, Abort, p_intf );
-    thread( (void *)p_intf );
+    Thread( (void *)p_intf );
 #else
     if( vlc_clone( &p_sys->thread, Thread, p_intf, VLC_THREAD_PRIORITY_LOW ) )
     {
@@ -578,7 +574,8 @@ static void *Thread( void *obj )
         p_sys->p_mi = p_mi;
 
         /* Check window type from the Qt platform back-end */
-        p_sys->voutWindowType = VOUT_WINDOW_TYPE_INVALID;
+        bool known_type = true;
+
         QString platform = app.platformName();
         if( platform == qfu("xcb") )
             p_sys->voutWindowType = VOUT_WINDOW_TYPE_XID;
@@ -589,13 +586,19 @@ static void *Thread( void *obj )
         else if( platform == qfu("cocoa" ) )
             p_sys->voutWindowType = VOUT_WINDOW_TYPE_NSOBJECT;
         else
+        {
             msg_Err( p_intf, "unknown Qt platform: %s", qtu(platform) );
+            known_type = false;
+        }
 
         var_Create( THEPL, "qt4-iface", VLC_VAR_ADDRESS );
-        var_SetAddress( THEPL, "qt4-iface", p_intf );
         var_Create( THEPL, "window", VLC_VAR_STRING );
-        if( p_sys->voutWindowType != VOUT_WINDOW_TYPE_INVALID )
+
+        if( known_type )
+        {
+            var_SetAddress( THEPL, "qt4-iface", p_intf );
             var_SetString( THEPL, "window", "qt,any" );
+        }
     }
 
     /* Explain how to show a dialog :D */
@@ -704,13 +707,10 @@ static int WindowOpen( vout_window_t *p_wnd, const vout_window_cfg_t *cfg )
         return VLC_EGENERIC;
     }
 
-    if( cfg->type != VOUT_WINDOW_TYPE_INVALID
-     && cfg->type != p_intf->p_sys->voutWindowType )
-        return VLC_EGENERIC;
-
     switch( p_intf->p_sys->voutWindowType )
     {
         case VOUT_WINDOW_TYPE_XID:
+        case VOUT_WINDOW_TYPE_HWND:
             if( var_InheritBool( p_wnd, "video-wallpaper" ) )
                 return VLC_EGENERIC;
             break;

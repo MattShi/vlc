@@ -37,7 +37,8 @@ struct sout_packetizer_input_t
 {
     sout_instance_t     *p_sout;
 
-    sout_stream_id_sys_t    *id;
+    void                *id;
+    bool                 b_flushed;
 };
 
 sout_instance_t *sout_NewInstance( vlc_object_t *, const char * );
@@ -48,6 +49,12 @@ sout_packetizer_input_t *sout_InputNew( sout_instance_t *, const es_format_t * )
 int sout_InputDelete( sout_packetizer_input_t * );
 int sout_InputSendBuffer( sout_packetizer_input_t *, block_t* );
 bool sout_InputIsEmpty(sout_packetizer_input_t *);
+
+enum sout_input_query_e
+{
+    SOUT_INPUT_SET_SPU_HIGHLIGHT, /* arg1=const vlc_spu_highlight_t *, can fail */
+};
+int  sout_InputControl( sout_packetizer_input_t *, int i_query, ... );
 void sout_InputFlush( sout_packetizer_input_t * );
 
 #endif

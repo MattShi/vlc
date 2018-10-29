@@ -78,7 +78,7 @@ BaseRepresentation *RateBasedAdaptationLogic::getNextRepresentation(BaseAdaptati
     return rep;
 }
 
-void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, mtime_t time)
+void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, vlc_tick_t time)
 {
     if(unlikely(time == 0))
         return;
@@ -86,7 +86,7 @@ void RateBasedAdaptationLogic::updateDownloadRate(const ID &, size_t size, mtime
     dllength += time;
     dlsize += size;
 
-    if(dllength < CLOCK_FREQ / 4)
+    if(dllength < VLC_TICK_FROM_MS(250))
         return;
 
     const size_t bps = CLOCK_FREQ * dlsize * 8 / dllength;

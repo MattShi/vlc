@@ -30,7 +30,6 @@
 
 #include <vlc_common.h>
 #include <vlc_plugin.h>
-#include <vlc_vout_wrapper.h>
 #include <vlc_vout.h>
 #include <assert.h>
 #include "vout_internal.h"
@@ -54,25 +53,16 @@ int vout_OpenWrapper(vout_thread_t *vout,
     msg_Dbg(vout, "Opening vout display wrapper");
 
     /* */
-    sys->display.title = var_InheritString(vout, "video-title");
-
-    /* */
-    const mtime_t double_click_timeout = 300000;
-    const mtime_t hide_timeout = var_CreateGetInteger(vout, "mouse-hide-timeout") * 1000;
     char *modlist = var_InheritString(vout, "vout");
 
     if (splitter_name)
-        sys->display.vd = vout_NewSplitter(vout, &vout->p->original, state, modlist, splitter_name,
-                                           double_click_timeout, hide_timeout);
+        sys->display.vd = vout_NewSplitter(vout, &vout->p->original, state, modlist, splitter_name);
     else
-        sys->display.vd = vout_NewDisplay(vout, &vout->p->original, state, modlist,
-                                          double_click_timeout, hide_timeout);
+        sys->display.vd = vout_NewDisplay(vout, &vout->p->original, state, modlist);
     free(modlist);
 
-    if (!sys->display.vd) {
-        free(sys->display.title);
+    if (!sys->display.vd)
         return VLC_EGENERIC;
-    }
 
     /* */
 #ifdef _WIN32
@@ -99,7 +89,6 @@ void vout_CloseWrapper(vout_thread_t *vout, vout_display_state_t *state)
     sys->decoder_pool = NULL; /* FIXME remove */
 
     vout_DeleteDisplay(sys->display.vd, state);
-    free(sys->display.title);
 }
 
 /*****************************************************************************
@@ -108,10 +97,8 @@ void vout_CloseWrapper(vout_thread_t *vout, vout_display_state_t *state)
 /* Minimum number of display picture */
 #define DISPLAY_PICTURE_COUNT (1)
 
-static void NoDrInit(vout_thread_t *vout)
+static void NoDrInit(vout_thread_sys_t *sys)
 {
-    vout_thread_sys_t *sys = vout->p;
-
     if (sys->display.use_dr)
         sys->display_pool = vout_display_Pool(sys->display.vd, 3);
     else
@@ -139,7 +126,7 @@ int vout_InitWrapper(vout_thread_t *vout)
 
 #ifndef NDEBUG
     if ( picture_pool_GetSize(display_pool) < display_pool_size )
-        msg_Warn(vout, "Not enough display buffers in the pool, requested %d got %d",
+        msg_Warn(vout, "Not enough display buffers in the pool, requested %u got %u",
                  display_pool_size, picture_pool_GetSize(display_pool));
 #endif
 
@@ -161,7 +148,7 @@ int vout_InitWrapper(vout_thread_t *vout)
         } else {
             sys->dpb_size = picture_pool_GetSize(sys->decoder_pool) - reserved_picture;
         }
-        NoDrInit(vout);
+        NoDrInit(sys);
     }
     sys->private_pool = picture_pool_Reserve(sys->decoder_pool, private_picture);
     if (!sys->private_pool)
@@ -202,7 +189,7 @@ void vout_ManageWrapper(vout_thread_t *vout)
 
     if (reset_display_pool) {
         sys->display.use_dr = !vout_IsDisplayFiltered(vd);
-        NoDrInit(vout);
+        NoDrInit(sys);
     }
 }
 

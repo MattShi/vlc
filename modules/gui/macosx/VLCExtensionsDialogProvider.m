@@ -377,7 +377,7 @@ static void extensionDialogCallback(extension_dialog_t *p_ext_dialog,
     extension_widget_t *widget;
     VLCDialogWindow *dialogWindow = (__bridge VLCDialogWindow *)(dialog->p_sys_intf);
 
-    FOREACH_ARRAY(widget, dialog->widgets) {
+    ARRAY_FOREACH(widget, dialog->widgets) {
         if (!widget)
             continue; /* Some widgets may be NULL@this point */
 
@@ -426,11 +426,12 @@ static void extensionDialogCallback(extension_dialog_t *p_ext_dialog,
             /* Explicitily release here, as we do not have transfered ownership to ARC,
              * given that not in all cases we want to destroy the widget.
              */
-            CFRelease(widget->p_sys_intf);
-            widget->p_sys_intf = NULL;
+            if (widget->p_sys_intf) {
+                CFRelease(widget->p_sys_intf);
+                widget->p_sys_intf = NULL;
+            }
         }
     }
-    FOREACH_END()
 }
 
 /** Create a dialog

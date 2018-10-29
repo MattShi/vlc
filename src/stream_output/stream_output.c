@@ -110,6 +110,7 @@ sout_instance_t *sout_NewInstance( vlc_object_t *p_parent, const char *psz_dest 
     /* *** init descriptor *** */
     p_sout->psz_sout    = strdup( psz_dest );
     p_sout->i_out_pace_nocontrol = 0;
+    p_sout->b_wants_substreams = false;
 
     vlc_mutex_init( &p_sout->lock );
     p_sout->p_stream = NULL;
@@ -120,6 +121,9 @@ sout_instance_t *sout_NewInstance( vlc_object_t *p_parent, const char *psz_dest 
     if( p_sout->p_stream )
     {
         free( psz_chain );
+        sout_StreamControl( p_sout->p_stream,
+                            SOUT_STREAM_WANTS_SUBSTREAMS,
+                            &p_sout->b_wants_substreams );
         return p_sout;
     }
 
@@ -163,6 +167,7 @@ sout_packetizer_input_t *sout_InputNew( sout_instance_t *p_sout,
         return NULL;
 
     p_input->p_sout = p_sout;
+    p_input->b_flushed = false;
 
     msg_Dbg( p_sout, "adding a new sout input for `%4.4s` (sout_input: %p)",
              (char*) &p_fmt->i_codec, (void *)p_input );
@@ -214,6 +219,32 @@ bool sout_InputIsEmpty( sout_packetizer_input_t *p_input )
     return b;
 }
 
+static int sout_InputControlVa( sout_packetizer_input_t *p_input, int i_query, va_list args )
+{
+    sout_instance_t *p_sout = p_input->p_sout;
+    if( i_query == SOUT_INPUT_SET_SPU_HIGHLIGHT )
+    {
+        vlc_mutex_lock( &p_sout->lock );
+        int i_ret = sout_StreamControl( p_sout->p_stream,
+                                        SOUT_STREAM_ID_SPU_HIGHLIGHT,
+                                        p_input->id, va_arg(args, void *) );
+        vlc_mutex_unlock( &p_sout->lock );
+        return i_ret;
+    }
+    return VLC_EGENERIC;
+}
+
+int sout_InputControl( sout_packetizer_input_t *p_input, int i_query, ... )
+{
+    va_list args;
+    int     i_result;
+
+    va_start( args, i_query );
+    i_result = sout_InputControlVa( p_input, i_query, args );
+    va_end( args );
+    return i_result;
+}
+
 void sout_InputFlush( sout_packetizer_input_t *p_input )
 {
     sout_instance_t     *p_sout = p_input->p_sout;
@@ -221,6 +252,7 @@ void sout_InputFlush( sout_packetizer_input_t *p_input )
     vlc_mutex_lock( &p_sout->lock );
     sout_StreamFlush( p_sout->p_stream, p_input->id );
     vlc_mutex_unlock( &p_sout->lock );
+    p_input->b_flushed = true;
 }
 
 /*****************************************************************************
@@ -232,6 +264,11 @@ int sout_InputSendBuffer( sout_packetizer_input_t *p_input,
     sout_instance_t     *p_sout = p_input->p_sout;
     int                 i_ret;
 
+    if( p_input->b_flushed )
+    {
+        p_buffer->i_flags |= BLOCK_FLAG_DISCONTINUITY;
+        p_input->b_flushed = false;
+    }
     vlc_mutex_lock( &p_sout->lock );
     i_ret = sout_StreamIdSend( p_sout->p_stream, p_input->id, p_buffer );
     vlc_mutex_unlock( &p_sout->lock );
@@ -372,7 +409,7 @@ sout_mux_t * sout_MuxNew( sout_instance_t *p_sout, const char *psz_mux,
 
     p_mux->b_add_stream_any_time = false;
     p_mux->b_waiting_stream = true;
-    p_mux->i_add_stream_start = -1;
+    p_mux->i_add_stream_start = VLC_TICK_INVALID;
 
     p_mux->p_module =
         module_need( p_mux, "sout mux", p_mux->psz_mux, true );
@@ -503,10 +540,10 @@ void sout_MuxDeleteStream( sout_mux_t *p_mux, sout_input_t *p_input )
     TAB_FIND( p_mux->i_nb_inputs, p_mux->pp_inputs, p_input, i_index );
     if( i_index >= 0 )
     {
-        p_mux->pf_delstream( p_mux, p_input );
-
         /* remove the entry */
-        TAB_REMOVE( p_mux->i_nb_inputs, p_mux->pp_inputs, p_input );
+        TAB_ERASE( p_mux->i_nb_inputs, p_mux->pp_inputs, i_index );
+
+        p_mux->pf_delstream( p_mux, p_input );
 
         if( p_mux->i_nb_inputs == 0 )
         {
@@ -525,27 +562,29 @@ void sout_MuxDeleteStream( sout_mux_t *p_mux, sout_input_t *p_input )
 int sout_MuxSendBuffer( sout_mux_t *p_mux, sout_input_t *p_input,
                          block_t *p_buffer )
 {
-    mtime_t i_dts = p_buffer->i_dts;
+    vlc_tick_t i_dts = p_buffer->i_dts;
     block_FifoPut( p_input->p_fifo, p_buffer );
 
     if( p_mux->p_sout->i_out_pace_nocontrol )
     {
-        mtime_t current_date = mdate();
+        vlc_tick_t current_date = vlc_tick_now();
         if ( current_date > i_dts )
             msg_Warn( p_mux, "late buffer for mux input (%"PRId64")",
                       current_date - i_dts );
     }
 
-    if( p_mux->b_waiting_stream )
-    {
-        const int64_t i_caching = var_GetInteger( p_mux->p_sout, "sout-mux-caching" ) * INT64_C(1000);
+    if( i_dts == VLC_TICK_INVALID )
+        i_dts = p_buffer->i_pts;
 
-        if( p_mux->i_add_stream_start < 0 )
+    if( p_mux->b_waiting_stream && i_dts != VLC_TICK_INVALID )
+    {
+        const vlc_tick_t i_caching = VLC_TICK_FROM_MS(var_GetInteger( p_mux->p_sout, "sout-mux-caching" ));
+
+        if( p_mux->i_add_stream_start == VLC_TICK_INVALID )
             p_mux->i_add_stream_start = i_dts;
 
         /* Wait until we have enough data before muxing */
-        if( p_mux->i_add_stream_start < 0 ||
-            i_dts < p_mux->i_add_stream_start + i_caching )
+        if( llabs( i_dts - p_mux->i_add_stream_start ) < i_caching )
             return VLC_SUCCESS;
         p_mux->b_waiting_stream = false;
     }
@@ -561,9 +600,9 @@ void sout_MuxFlush( sout_mux_t *p_mux, sout_input_t *p_input )
 /*****************************************************************************
  * sout_MuxGetStream: find stream to be muxed
  *****************************************************************************/
-int sout_MuxGetStream( sout_mux_t *p_mux, unsigned i_blocks, mtime_t *pi_dts )
+int sout_MuxGetStream( sout_mux_t *p_mux, unsigned i_blocks, vlc_tick_t *pi_dts )
 {
-    mtime_t i_dts = 0;
+    vlc_tick_t i_dts = 0;
     int     i_stream = -1;
 
     assert( i_blocks > 0 );

@@ -18,7 +18,6 @@ pkginclude_HEADERS = \
 	../include/vlc/libvlc_media_list.h \
 	../include/vlc/libvlc_media_list_player.h \
 	../include/vlc/libvlc_media_player.h \
-	../include/vlc/libvlc_vlm.h \
 	../include/vlc/libvlc_renderer_discoverer.h \
 	../include/vlc/vlc.h
 
@@ -42,7 +41,6 @@ libvlc_la_SOURCES = \
 	error.c \
 	log.c \
 	playlist.c \
-	vlm.c \
 	video.c \
 	audio.c \
 	event.c \
@@ -55,12 +53,11 @@ libvlc_la_SOURCES = \
 	media_discoverer.c
 EXTRA_DIST = libvlc.pc.in libvlc.sym ../include/vlc/libvlc_version.h.in
 
-libvlc_la_LIBADD = \
-	../src/libvlccore.la ../compat/libcompat.la $(LIBPTHREAD) $(LIBM)
+libvlc_la_LIBADD = ../src/libvlccore.la ../compat/libcompat.la $(LIBM)
 libvlc_la_LDFLAGS = \
 	$(LDFLAGS_libvlc) \
 	-no-undefined \
-	-version-info 11:0:6 \
+	-version-info 12:0:0 \
 	-export-symbols $(srcdir)/libvlc.sym
 libvlc_la_DEPENDENCIES = libvlc.sym
 if HAVE_WIN32

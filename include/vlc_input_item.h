@@ -33,23 +33,42 @@
 #include <vlc_meta.h>
 #include <vlc_epg.h>
 #include <vlc_events.h>
+#include <vlc_list.h>
 
 #include <string.h>
 
 typedef struct input_item_opaque input_item_opaque_t;
 typedef struct input_item_slave input_item_slave_t;
+typedef struct input_preparser_callbacks_t input_preparser_callbacks_t;
 
 struct info_t
 {
     char *psz_name;            /**< Name of this info */
     char *psz_value;           /**< Value of the info */
+    struct vlc_list node;
 };
+
+#define info_foreach(info, cat) vlc_list_foreach(info, cat, node)
 
 struct info_category_t
 {
     char   *psz_name;      /**< Name of this category */
-    int    i_infos;        /**< Number of infos in the category */
-    struct info_t **pp_infos;     /**< Pointer to an array of infos */
+    struct vlc_list infos; /**< Infos in the category */
+};
+
+enum input_item_type_e
+{
+    ITEM_TYPE_UNKNOWN,
+    ITEM_TYPE_FILE,
+    ITEM_TYPE_DIRECTORY,
+    ITEM_TYPE_DISC,
+    ITEM_TYPE_CARD,
+    ITEM_TYPE_STREAM,
+    ITEM_TYPE_PLAYLIST,
+    ITEM_TYPE_NODE,
+
+    /* This one is not a real type but the number of input_item types. */
+    ITEM_TYPE_NUMBER
 };
 
 /**
@@ -66,7 +85,7 @@ struct input_item_t
     unsigned   optflagc;
     input_item_opaque_t *opaques;    /**< List of opaque pointer values */
 
-    mtime_t    i_duration;           /**< Duration in microseconds */
+    vlc_tick_t i_duration;           /**< Duration in vlc ticks */
 
 
     int        i_categories;         /**< Number of info categories */
@@ -92,7 +111,7 @@ struct input_item_t
 
     vlc_mutex_t lock;                 /**< Lock for the item */
 
-    uint8_t     i_type;              /**< Type (file, disc, ... see input_item_type_e) */
+    enum input_item_type_e i_type;   /**< Type (file, disc, ... see input_item_type_e) */
     bool        b_net;               /**< Net: always true for TYPE_STREAM, it
                                           depends for others types */
     bool        b_error_when_reading;/**< Error When Reading */
@@ -104,20 +123,12 @@ struct input_item_t
                                           preparsing.*/
 };
 
-enum input_item_type_e
-{
-    ITEM_TYPE_UNKNOWN,
-    ITEM_TYPE_FILE,
-    ITEM_TYPE_DIRECTORY,
-    ITEM_TYPE_DISC,
-    ITEM_TYPE_CARD,
-    ITEM_TYPE_STREAM,
-    ITEM_TYPE_PLAYLIST,
-    ITEM_TYPE_NODE,
+#define INPUT_ITEM_URI_NOP "vlc://nop" /* dummy URI for node/directory items */
 
-    /* This one is not a real type but the number of input_item types. */
-    ITEM_TYPE_NUMBER
-};
+/* placeholder duration for items with no known duration at time of creation
+ * it may remain the duration for items like a node/directory */
+#define INPUT_DURATION_UNSET      VLC_TICK_INVALID
+#define INPUT_DURATION_INDEFINITE (-1) /* item with a known indefinite duration (live/continuous source) */
 
 enum input_item_net_type
 {
@@ -265,8 +276,8 @@ VLC_API char * input_item_GetTitleFbName( input_item_t * p_i ) VLC_USED;
 VLC_API char * input_item_GetURI( input_item_t * p_i ) VLC_USED;
 VLC_API char * input_item_GetNowPlayingFb( input_item_t *p_item ) VLC_USED;
 VLC_API void input_item_SetURI( input_item_t * p_i, const char *psz_uri );
-VLC_API mtime_t input_item_GetDuration( input_item_t * p_i );
-VLC_API void input_item_SetDuration( input_item_t * p_i, mtime_t i_duration );
+VLC_API vlc_tick_t input_item_GetDuration( input_item_t * p_i );
+VLC_API void input_item_SetDuration( input_item_t * p_i, vlc_tick_t i_duration );
 VLC_API bool input_item_IsPreparsed( input_item_t *p_i );
 VLC_API bool input_item_IsArtFetched( input_item_t *p_i );
 
@@ -308,6 +319,7 @@ INPUT_META(Episode)
 INPUT_META(ShowName)
 INPUT_META(Actors)
 INPUT_META(DiscNumber)
+INPUT_META(DiscTotal)
 
 #define input_item_SetTrackNum input_item_SetTrackNumber
 #define input_item_GetTrackNum input_item_GetTrackNumber
@@ -327,14 +339,14 @@ VLC_API void input_item_MergeInfos( input_item_t *, info_category_t * );
  */
 VLC_API input_item_t * input_item_NewExt( const char *psz_uri,
                                           const char *psz_name,
-                                          mtime_t i_duration, int i_type,
+                                          vlc_tick_t i_duration, enum input_item_type_e i_type,
                                           enum input_item_net_type i_net ) VLC_USED;
 
 #define input_item_New( psz_uri, psz_name ) \
-    input_item_NewExt( psz_uri, psz_name, -1, ITEM_TYPE_UNKNOWN, ITEM_NET_UNKNOWN )
+    input_item_NewExt( psz_uri, psz_name, INPUT_DURATION_UNSET, ITEM_TYPE_UNKNOWN, ITEM_NET_UNKNOWN )
 
 #define input_item_NewCard( psz_uri, psz_name ) \
-    input_item_NewExt( psz_uri, psz_name, -1, ITEM_TYPE_CARD, ITEM_LOCAL )
+    input_item_NewExt( psz_uri, psz_name, INPUT_DURATION_INDEFINITE, ITEM_TYPE_CARD, ITEM_LOCAL )
 
 #define input_item_NewDisc( psz_uri, psz_name, i_duration ) \
     input_item_NewExt( psz_uri, psz_name, i_duration, ITEM_TYPE_DISC, ITEM_LOCAL )
@@ -343,7 +355,7 @@ VLC_API input_item_t * input_item_NewExt( const char *psz_uri,
     input_item_NewExt( psz_uri, psz_name, i_duration, ITEM_TYPE_STREAM, ITEM_NET )
 
 #define input_item_NewDirectory( psz_uri, psz_name, i_net ) \
-    input_item_NewExt( psz_uri, psz_name, -1, ITEM_TYPE_DIRECTORY, i_net )
+    input_item_NewExt( psz_uri, psz_name, INPUT_DURATION_UNSET, ITEM_TYPE_DIRECTORY, i_net )
 
 #define input_item_NewFile( psz_uri, psz_name, i_duration, i_net ) \
     input_item_NewExt( psz_uri, psz_name, i_duration, ITEM_TYPE_FILE, i_net )
@@ -368,7 +380,7 @@ typedef enum input_item_meta_request_option_t
     META_REQUEST_OPTION_DO_INTERACT   = 0x04
 } input_item_meta_request_option_t;
 
-/* status of the vlc_InputItemPreparseEnded event */
+/* status of the on_preparse_ended() callback */
 enum input_item_preparse_status
 {
     ITEM_PREPARSE_SKIPPED,
@@ -377,11 +389,24 @@ enum input_item_preparse_status
     ITEM_PREPARSE_DONE
 };
 
+typedef struct input_preparser_callbacks_t {
+    void (*on_preparse_ended)(input_item_t *, enum input_item_preparse_status status, void *userdata);
+    void (*on_subtree_added)(input_item_t *, input_item_node_t *subtree, void *userdata);
+} input_preparser_callbacks_t;
+
+typedef struct input_fetcher_callbacks_t {
+    void (*on_art_fetch_ended)(input_item_t *, bool fetched, void *userdata);
+} input_fetcher_callbacks_t;
+
 VLC_API int libvlc_MetadataRequest( libvlc_int_t *, input_item_t *,
                                     input_item_meta_request_option_t,
+                                    const input_preparser_callbacks_t *cbs,
+                                    void *cbs_userdata,
                                     int, void * );
 VLC_API int libvlc_ArtRequest(libvlc_int_t *, input_item_t *,
-                              input_item_meta_request_option_t );
+                              input_item_meta_request_option_t,
+                              const input_fetcher_callbacks_t *cbs,
+                              void *cbs_userdata );
 VLC_API void libvlc_MetadataCancel( libvlc_int_t *, void * );
 
 /******************

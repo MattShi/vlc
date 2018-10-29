@@ -139,33 +139,6 @@ typedef struct libvlc_media_stats_t
     float       f_send_bitrate;
 } libvlc_media_stats_t;
 
-typedef struct libvlc_media_track_info_t
-{
-    /* Codec fourcc */
-    uint32_t    i_codec;
-    int         i_id;
-    libvlc_track_type_t i_type;
-
-    /* Codec specific */
-    int         i_profile;
-    int         i_level;
-
-    union {
-        struct {
-            /* Audio specific */
-            unsigned    i_channels;
-            unsigned    i_rate;
-        } audio;
-        struct {
-            /* Video specific */
-            unsigned    i_height;
-            unsigned    i_width;
-        } video;
-    } u;
-
-} libvlc_media_track_info_t;
-
-
 typedef struct libvlc_audio_track_t
 {
     unsigned    i_channels;
@@ -205,6 +178,17 @@ typedef struct libvlc_video_viewpoint_t
     float f_field_of_view; /**< field of view in degrees ]0;180[ (default 80.)*/
 } libvlc_video_viewpoint_t;
 
+typedef enum libvlc_video_multiview_t
+{
+    libvlc_video_multiview_2d,                  /**< No stereoscopy: 2D picture. */
+    libvlc_video_multiview_stereo_sbs,          /**< Side-by-side */
+    libvlc_video_multiview_stereo_tb,           /**< Top-bottom */
+    libvlc_video_multiview_stereo_row,          /**< Row sequential */
+    libvlc_video_multiview_stereo_col,          /**< Column sequential */
+    libvlc_video_multiview_stereo_frame,        /**< Frame sequential */
+    libvlc_video_multiview_stereo_checkerboard, /**< Checkerboard pattern */
+} libvlc_video_multiview_t;
+
 typedef struct libvlc_video_track_t
 {
     unsigned    i_height;
@@ -217,6 +201,7 @@ typedef struct libvlc_video_track_t
     libvlc_video_orient_t       i_orientation;
     libvlc_video_projection_t   i_projection;
     libvlc_video_viewpoint_t    pose; /**< Initial view point */
+    libvlc_video_multiview_t    i_multiview;
 } libvlc_video_track_t;
 
 typedef struct libvlc_subtitle_track_t

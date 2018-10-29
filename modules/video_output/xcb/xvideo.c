@@ -53,7 +53,7 @@
 
 static int  Open (vlc_object_t *);
 static void Close (vlc_object_t *);
-static int EnumAdaptors (vlc_object_t *, const char *, int64_t **, char ***);
+static int EnumAdaptors(const char *, int64_t **, char ***);
 
 /*
  * Module descriptor
@@ -80,7 +80,6 @@ vlc_module_end ()
 struct vout_display_sys_t
 {
     xcb_connection_t *conn;
-    vout_window_t *embed;/* VLC window */
 
     xcb_window_t window; /* drawable X window */
     xcb_gcontext_t gc;   /* context to put images */
@@ -98,7 +97,7 @@ struct vout_display_sys_t
 };
 
 static picture_pool_t *Pool (vout_display_t *, unsigned);
-static void Display (vout_display_t *, picture_t *, subpicture_t *subpicture);
+static void Display (vout_display_t *, picture_t *);
 static int Control (vout_display_t *, int, va_list);
 
 /**
@@ -141,7 +140,7 @@ static vlc_fourcc_t ParseFormat (vlc_object_t *obj,
         switch (f->num_planes)
         {
           case 1:
-            switch (popcount (f->red_mask | f->green_mask | f->blue_mask))
+            switch (vlc_popcount (f->red_mask | f->green_mask | f->blue_mask))
             {
               case 24:
                 if (f->bpp == 32 && f->depth == 32)
@@ -369,8 +368,7 @@ static int Open (vlc_object_t *obj)
     /* Connect to X */
     xcb_connection_t *conn;
     const xcb_screen_t *screen;
-    p_sys->embed = vlc_xcb_parent_Create(vd, &conn, &screen);
-    if (p_sys->embed == NULL)
+    if (vlc_xcb_parent_Create(vd, &conn, &screen) == NULL)
     {
         free (p_sys);
         return VLC_EGENERIC;
@@ -392,7 +390,7 @@ static int Open (vlc_object_t *obj)
     /* Cache adaptors infos */
     xcb_xv_query_adaptors_reply_t *adaptors =
         xcb_xv_query_adaptors_reply (conn,
-            xcb_xv_query_adaptors (conn, p_sys->embed->handle.xid), NULL);
+            xcb_xv_query_adaptors (conn, vd->cfg->window->handle.xid), NULL);
     if (adaptors == NULL)
         goto error;
 
@@ -488,7 +486,7 @@ static int Open (vlc_object_t *obj)
 
             xcb_create_pixmap (conn, f->depth, pixmap, screen->root, 1, 1);
             c = xcb_create_window_checked (conn, f->depth, p_sys->window,
-                 p_sys->embed->handle.xid, place.x, place.y,
+                 vd->cfg->window->handle.xid, place.x, place.y,
                  place.width, place.height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                  f->visual, mask, list);
             xcb_map_window (conn, p_sys->window);
@@ -588,7 +586,6 @@ static void Close (vlc_object_t *obj)
 
     free (p_sys->att);
     xcb_disconnect (p_sys->conn);
-    vout_display_DeleteWindow (vd, p_sys->embed);
     free (p_sys);
 }
 
@@ -663,7 +660,7 @@ static picture_pool_t *Pool (vout_display_t *vd, unsigned requested_count)
 /**
  * Sends an image to the X server.
  */
-static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void Display (vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *p_sys = vd->sys;
     xcb_shm_seg_t segment = XCB_picture_GetSegment(pic);
@@ -673,7 +670,7 @@ static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpictur
     vlc_xcb_Manage(vd, p_sys->conn, &p_sys->visible);
 
     if (!p_sys->visible)
-        goto out;
+        return;
 
     video_format_ApplyRotation(&fmt, &vd->source);
 
@@ -702,9 +699,6 @@ static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpictur
         msg_Dbg (vd, "%s: X11 error %d", "cannot put image", e->error_code);
         free (e);
     }
-out:
-    picture_Release (pic);
-    (void)subpicture;
 }
 
 static int Control (vout_display_t *vd, int query, va_list ap)
@@ -755,11 +749,10 @@ static int Control (vout_display_t *vd, int query, va_list ap)
     }
 }
 
-static int EnumAdaptors (vlc_object_t *obj, const char *var,
-                         int64_t **vp, char ***tp)
+static int EnumAdaptors(const char *var, int64_t **vp, char ***tp)
 {
     /* Connect to X */
-    char *display = var_InheritString (obj, "x11-display");
+    char *display = config_GetPsz("x11-display");
     xcb_connection_t *conn;
     int snum;
 
@@ -833,6 +826,6 @@ static int EnumAdaptors (vlc_object_t *obj, const char *var,
         *(texts++) = strndup (xcb_xv_adaptor_info_name (a), a->name_size);
     }
     free (adaptors);
-    (void) obj; (void) var;
+    (void) var;
     return values - *vp;
 }

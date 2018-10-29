@@ -39,7 +39,7 @@ struct xml_t
 
     /* Module properties */
     module_t  *p_module;
-    xml_sys_t *p_sys;
+    void      *p_sys;
 
     void (*pf_catalog_load) ( xml_t *, const char * );
     void (*pf_catalog_add) ( xml_t *, const char *, const char *,
@@ -66,7 +66,7 @@ struct xml_reader_t
 {
     struct vlc_common_members obj;
 
-    xml_reader_sys_t *p_sys;
+    void     *p_sys;
     stream_t *p_stream;
     module_t *p_module;
 
@@ -80,7 +80,6 @@ struct xml_reader_t
 VLC_API xml_reader_t * xml_ReaderCreate(vlc_object_t *, stream_t *) VLC_USED;
 #define xml_ReaderCreate( a, s ) xml_ReaderCreate(VLC_OBJECT(a), s)
 VLC_API void xml_ReaderDelete(xml_reader_t *);
-VLC_API xml_reader_t * xml_ReaderReset(xml_reader_t *, stream_t *) VLC_USED;
 
 static inline int xml_ReaderNextNode( xml_reader_t *reader, const char **pval )
 {

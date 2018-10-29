@@ -57,20 +57,6 @@
 
 typedef long (STDCALL *GETCLASS) ( const GUID*, const GUID*, void** );
 
-static const int pi_channels_maps[7] =
-{
-    0,
-    AOUT_CHAN_CENTER,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT,
-    AOUT_CHAN_CENTER | AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_REARLEFT
-     | AOUT_CHAN_REARRIGHT,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_CENTER
-     | AOUT_CHAN_REARLEFT | AOUT_CHAN_REARRIGHT,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_CENTER
-     | AOUT_CHAN_REARLEFT | AOUT_CHAN_REARRIGHT | AOUT_CHAN_LFE
-};
-
 /*****************************************************************************
  * Module descriptor
  *****************************************************************************/
@@ -117,7 +103,7 @@ vlc_module_end ()
 /****************************************************************************
  * Decoder descriptor declaration
  ****************************************************************************/
-struct decoder_sys_t
+typedef struct
 {
     HINSTANCE hmsdmo_dll;
     IMediaObject *p_dmo;
@@ -132,7 +118,7 @@ struct decoder_sys_t
     vlc_cond_t   wait_input, wait_output;
     bool         b_ready, b_works;
     block_t     *p_input;
-};
+} decoder_sys_t;
 
 const GUID IID_IWMCodecPrivateData = {0x73f0be8e, 0x57f7, 0x4f01, {0xaa, 0x66, 0x9f, 0x57, 0x34, 0xc, 0xfe, 0xe}};
 const GUID IID_IMediaObject = {0xd8ad0f58, 0x5494, 0x4102, {0x97, 0xc5, 0xec, 0x79, 0x8e, 0x59, 0xbc, 0xf4}};
@@ -458,8 +444,10 @@ static int DecOpen( decoder_t *p_dec )
         p_dec->fmt_out.audio.i_rate     = p_dec->fmt_in.audio.i_rate;
         p_dec->fmt_out.audio.i_channels = p_dec->fmt_in.audio.i_channels;
         p_dec->fmt_out.audio.i_bitspersample = 16;//p_dec->fmt_in.audio.i_bitspersample; We request 16
+        if( p_dec->fmt_in.audio.i_channels > 8 )
+            goto error;
         p_dec->fmt_out.audio.i_physical_channels =
-            pi_channels_maps[p_dec->fmt_out.audio.i_channels];
+            vlc_chan_maps[p_dec->fmt_out.audio.i_channels];
 
         p_wf->wFormatTag = WAVE_FORMAT_PCM;
         p_wf->nSamplesPerSec = p_dec->fmt_out.audio.i_rate;
@@ -609,6 +597,7 @@ static int DecOpen( decoder_t *p_dec )
         date_Init( &p_sys->end_date, p_dec->fmt_in.audio.i_rate, 1 );
     else
         date_Init( &p_sys->end_date, 25 /* FIXME */, 1 );
+    date_Set( &p_sys->end_date, VLC_TICK_0 );
 
     free( p_vih );
     free( p_wf );
@@ -837,18 +826,18 @@ static int DecBlock( decoder_t *p_dec, block_t **pp_block )
     p_block = *pp_block;
 
     /* Won't work with streams with B-frames, but do we have any ? */
-    if( p_block && p_block->i_pts <= VLC_TS_INVALID )
+    if( p_block && p_block->i_pts == VLC_TICK_INVALID )
         p_block->i_pts = p_block->i_dts;
 
     /* Date management */
-    if( p_block && p_block->i_pts > VLC_TS_INVALID &&
+    if( p_block && p_block->i_pts != VLC_TICK_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
 
 #if 0 /* Breaks the video decoding */
-    if( !date_Get( &p_sys->end_date ) )
+    if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
     {
         /* We've just started the stream, wait for the first PTS. */
         if( p_block ) block_Release( p_block );
@@ -1043,7 +1032,7 @@ static void *DecoderThread( void *data )
 /****************************************************************************
  * Encoder descriptor declaration
  ****************************************************************************/
-struct encoder_sys_t
+typedef struct
 {
     HINSTANCE hmsdmo_dll;
     IMediaObject *p_dmo;
@@ -1052,7 +1041,7 @@ struct encoder_sys_t
 
     date_t end_date;
 
-};
+} encoder_sys_t;
 
 /*****************************************************************************
  * EncoderOpen: open dmo codec
@@ -1471,7 +1460,7 @@ static block_t *EncodeBlock( encoder_t *p_enc, void *p_data )
     block_t *p_block_in;
     uint32_t i_status;
     int i_result;
-    mtime_t i_pts;
+    vlc_tick_t i_pts;
 
     if( !p_data ) return NULL;
 
@@ -1520,7 +1509,7 @@ static block_t *EncodeBlock( encoder_t *p_enc, void *p_data )
     /* Feed input to the DMO */
     p_in = CMediaBufferCreate( p_block_in, p_block_in->i_buffer, true );
     i_result = p_sys->p_dmo->vt->ProcessInput( p_sys->p_dmo, 0,
-       (IMediaBuffer *)p_in, DMO_INPUT_DATA_BUFFERF_TIME, i_pts * 10, 0 );
+       (IMediaBuffer *)p_in, DMO_INPUT_DATA_BUFFERF_TIME, MSFTIME_FROM_VLC_TICK(i_pts), 0 );
 
     p_in->vt->Release( (IUnknown *)p_in );
     if( i_result == S_FALSE )
@@ -1590,14 +1579,14 @@ static block_t *EncodeBlock( encoder_t *p_enc, void *p_data )
         {
 #ifdef DMO_DEBUG
             msg_Dbg( p_enc, "ProcessOutput(): pts: %"PRId64", %"PRId64,
-                     i_pts, db.rtTimestamp / 10 );
+                     i_pts, VLC_TICK_FROM_MSFTIME(db.rtTimestamp) );
 #endif
-            i_pts = db.rtTimestamp / 10;
+            i_pts = VLC_TICK_FROM_MSFTIME(db.rtTimestamp);
         }
 
         if( db.dwStatus & DMO_OUTPUT_DATA_BUFFERF_TIMELENGTH )
         {
-            p_block_out->i_length = db.rtTimelength / 10;
+            p_block_out->i_length = VLC_TICK_FROM_MSFTIME(db.rtTimelength);
 #ifdef DMO_DEBUG
             msg_Dbg( p_enc, "ProcessOutput(): length: %"PRId64,
                      p_block_out->i_length );

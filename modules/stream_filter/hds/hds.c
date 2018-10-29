@@ -122,7 +122,7 @@ typedef struct hds_stream_s
 
 #define BITRATE_AS_BYTES_PER_SECOND 1024/8
 
-struct stream_sys_t
+typedef struct
 {
     char         *base_url;    /* URL common part for chunks */
     vlc_thread_t live_thread;
@@ -144,7 +144,7 @@ struct stream_sys_t
 
     bool         live;
     bool         closed;
-};
+} stream_sys_t;
 
 typedef struct _bootstrap_info {
     uint8_t* data;
@@ -207,7 +207,7 @@ vlc_module_begin()
     set_subcategory( SUBCAT_INPUT_STREAM_FILTER )
     set_description( N_("HTTP Dynamic Streaming") )
     set_shortname( "Dynamic Streaming")
-    set_capability( "stream_filter", 30 )
+    set_capability( "stream_filter", 330 )
     set_callbacks( Open, Close )
 vlc_module_end()
 
@@ -1131,11 +1131,11 @@ static void* live_thread( void* p )
         }
     }
 
-    mtime_t last_dl_start_time;
+    vlc_tick_t last_dl_start_time;
 
     while( ! sys->closed )
     {
-        last_dl_start_time = mdate();
+        last_dl_start_time = vlc_tick_now();
         stream_t* download_stream = vlc_stream_NewURL( p_this, abst_url );
         if( ! download_stream )
         {
@@ -1167,7 +1167,9 @@ static void* live_thread( void* p )
             vlc_stream_Delete( download_stream );
         }
 
-        mwait( last_dl_start_time + ( ((int64_t)hds_stream->fragment_runs[hds_stream->fragment_run_count-1].fragment_duration) * 1000000LL) / ((int64_t)hds_stream->afrt_timescale) );
+        vlc_tick_wait( last_dl_start_time +
+                       vlc_tick_from_samples(hds_stream->fragment_runs[hds_stream->fragment_run_count-1].fragment_duration,
+                                             hds_stream->afrt_timescale) );
 
 
     }
@@ -1329,10 +1331,16 @@ static int parse_Manifest( stream_t *s, manifest_t *m )
         case XML_READER_STARTELEM:
             if( current_element_idx == 0 && element_stack[current_element_idx] == 0 ) {
                 if( !( element_stack[current_element_idx] = strdup( node ) ) )
+                {
+                    free(media_id);
                     return VLC_ENOMEM;
+                }
             } else {
                 if ( !( element_stack[++current_element_idx] = strdup( node ) ) )
+                {
+                    free(media_id);
                     return VLC_ENOMEM;
+                }
             }
 
             break;
@@ -1362,6 +1370,7 @@ static int parse_Manifest( stream_t *s, manifest_t *m )
             if( media_idx == MAX_MEDIA_ELEMENTS )
             {
                 msg_Err( (vlc_object_t*) s, "Too many media elements, quitting" );
+                free(media_id);
                 return VLC_EGENERIC;
             }
 
@@ -1370,17 +1379,26 @@ static int parse_Manifest( stream_t *s, manifest_t *m )
                 if( !strcmp(attr_name, "streamId" ) )
                 {
                     if( !( medias[media_idx].stream_id = strdup( attr_value ) ) )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
                 }
                 else if( !strcmp(attr_name, "url" ) )
                 {
                     if( !( medias[media_idx].media_url = strdup( attr_value ) ) )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
                 }
                 else if( !strcmp(attr_name, "bootstrapInfoId" ) )
                 {
                     if( !( medias[media_idx].bootstrap_id = strdup( attr_value ) ) )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
                 }
                 else if( !strcmp(attr_name, "bitrate" ) )
                 {
@@ -1397,17 +1415,26 @@ static int parse_Manifest( stream_t *s, manifest_t *m )
                 if( !strcmp(attr_name, "url" ) )
                 {
                     if( !( bootstraps[bootstrap_idx].url = strdup( attr_value ) ) )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
                 }
                 else if( !strcmp(attr_name, "id" ) )
                 {
                     if( !( bootstraps[bootstrap_idx].id = strdup( attr_value ) ) )
-                       return VLC_ENOMEM;
+                    {
+                        free(media_id);
+                        return VLC_ENOMEM;
+                    }
                 }
                 else if( !strcmp(attr_name, "profile" ) )
                 {
                     if( !( bootstraps[bootstrap_idx].profile = strdup( attr_value ) ) )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
                 }
             }
         }
@@ -1457,7 +1484,10 @@ static int parse_Manifest( stream_t *s, manifest_t *m )
                         vlc_b64_decode_binary( (uint8_t**)&medias[mi].metadata, start );
 
                     if ( ! medias[mi].metadata )
+                    {
+                        free(media_id);
                         return VLC_ENOMEM;
+                    }
 
                     uint8_t *end_marker =
                         medias[mi].metadata + medias[mi].metadata_len - sizeof(amf_object_end);
@@ -1865,8 +1895,8 @@ static int Control( stream_t *s, int i_query, va_list args )
             *(va_arg( args, bool * )) = true;
             break;
         case STREAM_GET_PTS_DELAY:
-            *va_arg (args, int64_t *) = INT64_C(1000) *
-                var_InheritInteger(s, "network-caching");
+            *va_arg (args, vlc_tick_t *) = VLC_TICK_FROM_MS(
+                var_InheritInteger(s, "network-caching") );
              break;
         case STREAM_GET_SIZE:
             *(va_arg (args, uint64_t *)) = get_stream_size(s);

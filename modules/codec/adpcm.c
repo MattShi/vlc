@@ -65,7 +65,7 @@ enum adpcm_codec_e
     ADPCM_EA
 };
 
-struct decoder_sys_t
+typedef struct
 {
     enum adpcm_codec_e codec;
 
@@ -74,7 +74,7 @@ struct decoder_sys_t
 
     date_t              end_date;
     int16_t            *prev;
-};
+} decoder_sys_t;
 
 static void DecodeAdpcmMs    ( decoder_t *, int16_t *, uint8_t * );
 static void DecodeAdpcmImaWav( decoder_t *, int16_t *, uint8_t * );
@@ -82,17 +82,6 @@ static void DecodeAdpcmImaQT ( decoder_t *, int16_t *, uint8_t * );
 static void DecodeAdpcmDk4   ( decoder_t *, int16_t *, uint8_t * );
 static void DecodeAdpcmDk3   ( decoder_t *, int16_t *, uint8_t * );
 static void DecodeAdpcmEA    ( decoder_t *, int16_t *, uint8_t * );
-
-static const int pi_channels_maps[6] =
-{
-    0,
-    AOUT_CHAN_CENTER,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_CENTER,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_REARLEFT | AOUT_CHAN_REARLEFT,
-    AOUT_CHAN_LEFT | AOUT_CHAN_RIGHT | AOUT_CHAN_CENTER
-     | AOUT_CHAN_REARLEFT | AOUT_CHAN_REARLEFT
-};
 
 /* Various table from http://www.pcisys.net/~melanson/codecs/adpcm.txt */
 static const int i_index_table[16] =
@@ -278,10 +267,9 @@ static int OpenDecoder( vlc_object_t *p_this )
     p_dec->fmt_out.i_codec = VLC_CODEC_S16N;
     p_dec->fmt_out.audio.i_rate = p_dec->fmt_in.audio.i_rate;
     p_dec->fmt_out.audio.i_channels = i_channels;
-    p_dec->fmt_out.audio.i_physical_channels = pi_channels_maps[i_channels];
+    p_dec->fmt_out.audio.i_physical_channels = vlc_chan_maps[i_channels];
 
     date_Init( &p_sys->end_date, p_dec->fmt_out.audio.i_rate, 1 );
-    date_Set( &p_sys->end_date, 0 );
 
     p_dec->pf_decode = DecodeAudio;
     p_dec->pf_flush  = Flush;
@@ -296,7 +284,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->end_date, 0 );
+    date_Set( &p_sys->end_date, VLC_TICK_INVALID );
 }
 
 /*****************************************************************************
@@ -318,17 +306,17 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t **pp_block )
             goto drop;
     }
 
-    if( p_block->i_pts > VLC_TS_INVALID &&
+    if( p_block->i_pts != VLC_TICK_INVALID &&
         p_block->i_pts != date_Get( &p_sys->end_date ) )
     {
         date_Set( &p_sys->end_date, p_block->i_pts );
     }
-    else if( !date_Get( &p_sys->end_date ) )
+    else if( date_Get( &p_sys->end_date ) == VLC_TICK_INVALID )
         /* We've just started the stream, wait for the first PTS. */
         goto drop;
 
     /* Don't re-use the same pts twice */
-    p_block->i_pts = VLC_TS_INVALID;
+    p_block->i_pts = VLC_TICK_INVALID;
 
     if( p_block->i_buffer >= p_sys->i_block )
     {

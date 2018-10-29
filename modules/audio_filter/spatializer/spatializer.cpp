@@ -91,11 +91,16 @@ vlc_module_end ()
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
+
+namespace {
+
 struct filter_sys_t
 {
     vlc_mutex_t lock;
     revmodel *p_reverbm;
 };
+
+} // namespace
 
 #define DECLARECB(fn) static int fn (vlc_object_t *,char const *, \
                                      vlc_value_t, vlc_value_t, void *)
@@ -107,12 +112,16 @@ DECLARECB( WidthCallback );
 
 #undef  DECLARECB
 
+namespace {
+
 struct callback_s {
   const char *psz_name;
   int (*fp_callback)(vlc_object_t *,const char *,
                      vlc_value_t,vlc_value_t,void *);
   void (revmodel::* fp_set)(float);
 };
+
+} // namespace
 
 static const callback_s callbacks[] = {
     { "spatializer-roomsize", RoomCallback,  &revmodel::setroomsize },
@@ -135,7 +144,7 @@ static int Open( vlc_object_t *p_this )
     vlc_object_t *p_aout = p_filter->obj.parent;
 
      /* Allocate structure */
-    p_sys = p_filter->p_sys = (filter_sys_t*)malloc( sizeof( *p_sys ) );
+    p_filter->p_sys = p_sys = (filter_sys_t*)malloc( sizeof( *p_sys ) );
     if( !p_sys )
         return VLC_ENOMEM;
 
@@ -172,7 +181,7 @@ static int Open( vlc_object_t *p_this )
 static void Close( vlc_object_t *p_this )
 {
     filter_t     *p_filter = (filter_t *)p_this;
-    filter_sys_t *p_sys = p_filter->p_sys;
+    filter_sys_t *p_sys = reinterpret_cast<filter_sys_t *>( p_filter->p_sys );
     vlc_object_t *p_aout = p_filter->obj.parent;
 
     /* Delete the callbacks */
@@ -196,7 +205,7 @@ static void Close( vlc_object_t *p_this )
 static void SpatFilter( filter_t *p_filter, float *out, float *in,
                         unsigned i_samples, unsigned i_channels )
 {
-    filter_sys_t *p_sys = p_filter->p_sys;
+    filter_sys_t *p_sys = reinterpret_cast<filter_sys_t *>( p_filter->p_sys );
     vlc_mutex_locker locker( &p_sys->lock );
 
     for( unsigned i = 0; i < i_samples; i++ )

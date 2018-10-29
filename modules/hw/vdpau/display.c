@@ -55,7 +55,6 @@ vlc_module_end()
 struct vout_display_sys_t
 {
     xcb_connection_t *conn; /**< XCB connection */
-    vout_window_t *embed; /**< parent window */
     vdp_t *vdp; /**< VDPAU back-end */
     picture_t *current; /**< Currently visible picture */
 
@@ -240,10 +239,12 @@ out:/* Destroy GPU surface */
     vdp_bitmap_surface_destroy(sys->vdp, surface);
 }
 
-static void Queue(vout_display_t *vd, picture_t *pic, subpicture_t *subpic)
+static void Queue(vout_display_t *vd, picture_t *pic, subpicture_t *subpic,
+                  vlc_tick_t date)
 {
     vout_display_sys_t *sys = vd->sys;
-    VdpOutputSurface surface = pic->p_sys->surface;
+    picture_sys_t *p_sys = pic->p_sys;
+    VdpOutputSurface surface = p_sys->surface;
     VdpStatus err;
 
     VdpPresentationQueueStatus status;
@@ -259,7 +260,7 @@ static void Queue(vout_display_t *vd, picture_t *pic, subpicture_t *subpic)
             RenderRegion(vd, surface, subpic, r);
 
     /* Compute picture presentation time */
-    mtime_t now = mdate();
+    vlc_tick_t now = vlc_tick_now();
     VdpTime pts;
 
     err = vdp_presentation_queue_get_time(sys->vdp, sys->queue, &pts);
@@ -272,15 +273,15 @@ static void Queue(vout_display_t *vd, picture_t *pic, subpicture_t *subpic)
         return;
     }
 
-    mtime_t delay = pic->date - now;
+    vlc_tick_t delay = date - now;
     if (delay < 0)
         delay = 0; /* core bug: date is not updated during pause */
-    if (unlikely(delay > CLOCK_FREQ))
+    if (unlikely(delay > VLC_TICK_FROM_SEC(1)))
     {   /* We would get stuck if the delay was too long. */
         msg_Dbg(vd, "picture date corrupt: delay of %"PRId64" us", delay);
-        delay = CLOCK_FREQ / 50;
+        delay = VLC_TICK_FROM_MS(20);
     }
-    pts += delay * 1000;
+    pts += MS_FROM_VLC_TICK(delay);
 
     /* Queue picture */
     err = vdp_presentation_queue_display(sys->vdp, sys->queue, surface, 0, 0,
@@ -290,9 +291,10 @@ static void Queue(vout_display_t *vd, picture_t *pic, subpicture_t *subpic)
                 vdp_get_error_string(sys->vdp, err));
 }
 
-static void Wait(vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void Wait(vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *sys = vd->sys;
+    xcb_generic_event_t *ev;
 
     picture_t *current = sys->current;
     if (current != NULL)
@@ -307,21 +309,14 @@ static void Wait(vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
         {
             msg_Err(vd, "presentation queue blocking error: %s",
                     vdp_get_error_string(sys->vdp, err));
-            picture_Release(pic);
             goto out;
         }
         picture_Release(current);
     }
 
-    sys->current = pic;
+    sys->current = picture_Hold(pic);
 out:
-    /* We already dealt with the subpicture in the Queue phase, so it's safe to
-       delete at this point */
-    if (subpicture)
-        subpicture_Delete(subpicture);
-
     /* Drain the event queue. TODO: remove sys->conn completely */
-    xcb_generic_event_t *ev;
 
     while ((ev = xcb_poll_for_event(sys->conn)) != NULL)
         free(ev);
@@ -424,22 +419,20 @@ static int Open(vlc_object_t *obj)
         return VLC_ENOMEM;
 
     const xcb_screen_t *screen;
-    sys->embed = vlc_xcb_parent_Create(vd, &sys->conn, &screen);
-    if (sys->embed == NULL)
+    if (vlc_xcb_parent_Create(vd, &sys->conn, &screen) == NULL)
     {
         free(sys);
         return VLC_EGENERIC;
     }
 
     /* Load the VDPAU back-end and create a device instance */
-    VdpStatus err = vdp_get_x11(sys->embed->display.x11,
+    VdpStatus err = vdp_get_x11(vd->cfg->window->display.x11,
                                 xcb_screen_num(sys->conn, screen),
                                 &sys->vdp, &sys->device);
     if (err != VDP_STATUS_OK)
     {
         msg_Dbg(obj, "device creation failure: error %d", (int)err);
         xcb_disconnect(sys->conn);
-        vout_display_DeleteWindow(vd, sys->embed);
         free(sys);
         return VLC_EGENERIC;
     }
@@ -589,7 +582,7 @@ static int Open(vlc_object_t *obj)
 
         xcb_void_cookie_t c =
             xcb_create_window_checked(sys->conn, screen->root_depth,
-                sys->window, sys->embed->handle.xid, place.x, place.y,
+                sys->window, vd->cfg->window->handle.xid, place.x, place.y,
                 place.width, place.height, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                 screen->root_visual, mask, values);
         if (vlc_xcb_error_Check(vd, sys->conn, "window creation failure", c))
@@ -659,7 +652,6 @@ static int Open(vlc_object_t *obj)
 error:
     vdp_release_x11(sys->vdp);
     xcb_disconnect(sys->conn);
-    vout_display_DeleteWindow(vd, sys->embed);
     free(sys);
     return VLC_EGENERIC;
 }
@@ -677,6 +669,5 @@ static void Close(vlc_object_t *obj)
 
     vdp_release_x11(sys->vdp);
     xcb_disconnect(sys->conn);
-    vout_display_DeleteWindow(vd, sys->embed);
     free(sys);
 }

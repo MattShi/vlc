@@ -24,11 +24,11 @@
 
 #import "CompatibilityFixes.h"
 #import "misc.h"
-#import "VLCMain.h"                                          /* VLCApplication */
 #import "VLCMainWindow.h"
 #import "VLCMainMenu.h"
 #import "VLCControlsBarCommon.h"
 #import "VLCCoreInteraction.h"
+#import "VLCStringUtility.h"
 #import <vlc_actions.h>
 
 /*****************************************************************************
@@ -144,55 +144,6 @@
     }
 
     [super drawRect:dirtyRect];
-}
-
-@end
-
-
-/*****************************************************************************
- * VLCMainWindowSplitView implementation
- *****************************************************************************/
-@implementation VLCMainWindowSplitView : NSSplitView
-
-// Custom color for the dividers
-- (NSColor *)dividerColor
-{
-    return [NSColor colorWithCalibratedRed:.60 green:.60 blue:.60 alpha:1.];
-}
-
-// Custom thickness for the divider
-- (CGFloat)dividerThickness
-{
-    return 1.0;
-}
-
-@end
-
-/*****************************************************************************
- * VLCThreePartImageView interface
- *****************************************************************************/
-
-@interface VLCThreePartImageView()
-{
-    NSImage *_left_img;
-    NSImage *_middle_img;
-    NSImage *_right_img;
-}
-@end
-
-@implementation VLCThreePartImageView
-
-- (void)setImagesLeft:(NSImage *)left middle: (NSImage *)middle right:(NSImage *)right
-{
-    _left_img = left;
-    _middle_img = middle;
-    _right_img = right;
-}
-
-- (void)drawRect:(NSRect)rect
-{
-    NSRect bnds = [self bounds];
-    NSDrawThreePartImage( bnds, _left_img, _middle_img, _right_img, NO, NSCompositeSourceOver, 1, NO );
 }
 
 @end

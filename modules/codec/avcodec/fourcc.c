@@ -62,7 +62,12 @@ static const struct vlc_avcodec_fourcc video_codecs[] =
     { VLC_CODEC_SP5X, AV_CODEC_ID_SP5X },
     { VLC_CODEC_JPEGLS, AV_CODEC_ID_JPEGLS },
     { VLC_CODEC_MP4V, AV_CODEC_ID_MPEG4 },
-    /* AV_CODEC_ID_RAWVIDEO */
+    { VLC_CODEC_RGB32, AV_CODEC_ID_RAWVIDEO },
+    { VLC_CODEC_RGB24, AV_CODEC_ID_RAWVIDEO },
+    { VLC_CODEC_RGB16, AV_CODEC_ID_RAWVIDEO },
+    { VLC_CODEC_RGB8, AV_CODEC_ID_RAWVIDEO },
+    { VLC_CODEC_RGBA, AV_CODEC_ID_RAWVIDEO },
+    { VLC_CODEC_ARGB, AV_CODEC_ID_RAWVIDEO },
     { VLC_CODEC_DIV1, AV_CODEC_ID_MSMPEG4V1 },
     { VLC_CODEC_DIV2, AV_CODEC_ID_MSMPEG4V2 },
     { VLC_CODEC_DIV3, AV_CODEC_ID_MSMPEG4V3 },
@@ -281,6 +286,10 @@ static const struct vlc_avcodec_fourcc video_codecs[] =
     /* ffmpeg only: AV_CODEC_ID_SNOW */
     /* ffmpeg only: AV_CODEC_ID_SMVJPEG */
 
+#if LIBAVCODEC_VERSION_CHECK( 58, 0, 0, 1, 100 )
+    { VLC_CODEC_MAGICYUV, AV_CODEC_ID_MAGICYUV },
+#endif
+
 #if LIBAVCODEC_VERSION_CHECK( 57, 999, 999, 24, 102 )
     { VLC_CODEC_CINEFORM, AV_CODEC_ID_CFHD },
 #endif
@@ -295,6 +304,10 @@ static const struct vlc_avcodec_fourcc video_codecs[] =
 
 #if LIBAVCODEC_VERSION_CHECK( 57, 999, 999, 79, 100 )
     { VLC_CODEC_FMVC, AV_CODEC_ID_FMVC },
+#endif
+
+#if LIBAVCODEC_VERSION_CHECK( 58, 999, 999, 24, 100 )
+    { VLC_CODEC_IMM4, AV_CODEC_ID_IMM4 },
 #endif
 };
 
@@ -460,6 +473,14 @@ static const struct vlc_avcodec_fourcc audio_codecs[] =
     /* AV_CODEC_ID_PAF_AUDIO */
     { VLC_CODEC_ON2AVC, AV_CODEC_ID_ON2AVC },
 
+    /* DSD (FFmpeg only) */
+#if LIBAVCODEC_VERSION_MICRO >= 100
+    { VLC_CODEC_DSD_LSBF, AV_CODEC_ID_DSD_LSBF },
+    { VLC_CODEC_DSD_MSBF, AV_CODEC_ID_DSD_MSBF },
+    { VLC_CODEC_DSD_LSBF_PLANAR, AV_CODEC_ID_DSD_LSBF_PLANAR },
+    { VLC_CODEC_DSD_MSBF_PLANAR, AV_CODEC_ID_DSD_MSBF_PLANAR },
+#endif
+
     /* ffmpeg only: AV_CODEC_ID_FFWAVESYNTH */
     /* ffmpeg only: AV_CODEC_ID_SONIC */
     /* ffmpeg only: AV_CODEC_ID_SONIC_LS */
@@ -543,6 +564,8 @@ vlc_fourcc_t GetVlcFourcc( unsigned i_ffmpeg_codec )
 {
     for( size_t i = 0; i < ARRAY_SIZE(video_codecs); i++ )
     {
+        if( i_ffmpeg_codec == AV_CODEC_ID_RAWVIDEO )
+            return VLC_CODEC_UNKNOWN;
         if( video_codecs[i].i_codec == i_ffmpeg_codec )
             return video_codecs[i].i_fourcc;
     }

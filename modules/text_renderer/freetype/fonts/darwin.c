@@ -33,6 +33,7 @@
 
 #include <vlc_common.h>
 #include <vlc_filter.h>                                      /* filter_sys_t */
+#include <vlc_charset.h>                                     /* FromCFString */
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreText/CoreText.h>
@@ -42,32 +43,12 @@
 char* getPathForFontDescription(CTFontDescriptorRef fontDescriptor);
 void addNewFontToFamily(filter_t *p_filter, CTFontDescriptorRef iter, char *path, vlc_family_t *family);
 
-static char* getCStringCopyForCFStringRef(CFStringRef cfstring, CFStringEncoding encoding)
-{
-    // Try to get pointer directly
-    const char *cptr = CFStringGetCStringPtr(cfstring, encoding);
-    if (cptr) {
-        return strdup(cptr);
-    }
-
-    // If it fails, use CFStringGetCString
-    CFIndex len = CFStringGetLength(cfstring);
-    CFIndex size = CFStringGetMaximumSizeForEncoding(len, encoding);
-    char *buffer = calloc(len + 1, sizeof(char));
-
-    if (CFStringGetCString(cfstring, buffer, size, encoding)) {
-        return buffer;
-    } else {
-        free(buffer);
-        return NULL;
-    }
-}
 
 char* getPathForFontDescription(CTFontDescriptorRef fontDescriptor)
 {
     CFURLRef url = CTFontDescriptorCopyAttribute(fontDescriptor, kCTFontURLAttribute);
     CFStringRef path = CFURLCopyFileSystemPath(url, kCFURLPOSIXPathStyle);
-    char *retPath = getCStringCopyForCFStringRef(path, kCFStringEncodingUTF8);
+    char *retPath = FromCFString(path, kCFStringEncodingUTF8);
     CFRelease(path);
     CFRelease(url);
     return retPath;
@@ -149,11 +130,13 @@ const vlc_family_t *CoreText_GetFamily(filter_t *p_filter, const char *psz_famil
 
     coreTextFontCollection = CTFontCollectionCreateWithFontDescriptors(coreTextFontDescriptorsArray, 0);
     if (coreTextFontCollection == NULL) {
+        msg_Warn(p_filter,"CTFontCollectionCreateWithFontDescriptors (1) failed!");
         goto end;
     }
 
     matchedFontDescriptions = CTFontCollectionCreateMatchingFontDescriptors(coreTextFontCollection);
     if (matchedFontDescriptions == NULL) {
+        msg_Warn(p_filter, "CTFontCollectionCreateMatchingFontDescriptors (2) failed!");
         goto end;
     }
 
@@ -227,15 +210,16 @@ vlc_family_t *CoreText_GetFallbacks(filter_t *p_filter, const char *psz_family, 
     CFStringRef fallbackFontFamilyName = CTFontCopyFamilyName(fallbackFont);
 
     /* create a new family object */
-    const char *psz_fallbackFamilyName = CFStringGetCStringPtr(fallbackFontFamilyName, kCFStringEncodingUTF8);
+    char *psz_fallbackFamilyName = FromCFString(fallbackFontFamilyName, kCFStringEncodingUTF8);
     if (psz_fallbackFamilyName == NULL) {
+        msg_Warn(p_filter, "Failed to convert font family name CFString to C string");
         goto done;
     }
 #ifndef NDEBUG
     msg_Dbg(p_filter, "Will deploy fallback font '%s'", psz_fallbackFamilyName);
 #endif
 
-    psz_lc_fallback = ToLower(strdup(psz_fallbackFamilyName));
+    psz_lc_fallback = ToLower(psz_fallbackFamilyName);
 
     p_family = vlc_dictionary_value_for_key(&p_sys->family_map, psz_lc_fallback);
     if (p_family) {
@@ -268,6 +252,7 @@ done:
     CFRelease(codepointString);
     CFRelease(fallbackFont);
     CFRelease(fallbackFontFamilyName);
+    free(psz_fallbackFamilyName);
     free(psz_lc_fallback);
     free(psz_fontPath);
     if (postScriptFallbackFontname != NULL)

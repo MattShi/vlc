@@ -95,7 +95,7 @@ vlc_module_begin ()
 
     add_submodule ()
         set_section( N_("Lua HTTP"), 0 )
-            add_password ( "http-password", NULL, PASS_TEXT, PASS_LONGTEXT, false )
+            add_password("http-password", NULL, PASS_TEXT, PASS_LONGTEXT)
             add_string ( "http-src",  NULL, SRC_TEXT,  SRC_LONGTEXT,  true )
             add_bool   ( "http-index", false, INDEX_TEXT, INDEX_LONGTEXT, true )
         set_capability( "interface", 0 )
@@ -123,9 +123,8 @@ vlc_module_begin ()
             add_integer( "telnet-port", TELNETPORT_DEFAULT, TELNETPORT_TEXT,
                          TELNETPORT_LONGTEXT, true )
                 change_integer_range( 1, 65535 )
-            add_password( "telnet-password", NULL, TELNETPWD_TEXT,
-
-                          TELNETPWD_LONGTEXT, true )
+            add_password("telnet-password", NULL, TELNETPWD_TEXT,
+                         TELNETPWD_LONGTEXT)
         set_capability( "interface", 0 )
         set_callbacks( Open_LuaTelnet, Close_LuaIntf )
         set_description( N_("Lua Telnet") )
@@ -147,7 +146,7 @@ vlc_module_begin ()
         add_shortcut( "luaplaylist" )
         set_shortname( N_("Lua Playlist") )
         set_description( N_("Lua Playlist Parser Interface") )
-        set_capability( "stream_filter", 2 )
+        set_capability( "stream_filter", 302 )
         set_callbacks( Import_LuaPlaylist, Close_LuaPlaylist )
 
     add_submodule ()
@@ -220,11 +219,11 @@ int vlclua_dir_list(const char *luadirname, char ***restrict listp)
     *listp = list;
 
     /* Lua scripts in user-specific data directory */
-    list = vlclua_dir_list_append(list, config_GetUserDir(VLC_DATA_DIR),
+    list = vlclua_dir_list_append(list, config_GetUserDir(VLC_USERDATA_DIR),
                                   luadirname);
 
-    char *libdir = config_GetLibDir();
-    char *datadir = config_GetDataDir();
+    char *libdir = config_GetSysPath(VLC_PKG_LIBEXEC_DIR, NULL);
+    char *datadir = config_GetSysPath(VLC_PKG_DATA_DIR, NULL);
     bool both = libdir != NULL && datadir != NULL && strcmp(libdir, datadir);
 
     /* Tokenized Lua scripts in architecture-specific data directory */
@@ -233,6 +232,8 @@ int vlclua_dir_list(const char *luadirname, char ***restrict listp)
     /* Source Lua Scripts in architecture-independent data directory */
     if (both || libdir == NULL)
         list = vlclua_dir_list_append(list, datadir, luadirname);
+    else
+        free(datadir);
 
     *list = NULL;
     return VLC_SUCCESS;
@@ -485,11 +486,11 @@ input_item_t *vlclua_read_input_item(vlc_object_t *obj, lua_State *L)
         msg_Warn(obj, "Playlist item name should be a string" );
 
     /* Read duration */
-    mtime_t duration = -1;
+    vlc_tick_t duration = INPUT_DURATION_INDEFINITE;
 
     lua_getfield( L, -3, "duration" );
     if (lua_isnumber(L, -1))
-        duration = (mtime_t)(lua_tonumber(L, -1) * (CLOCK_FREQ * 1.));
+        duration = vlc_tick_from_sec( lua_tonumber(L, -1) );
     else if (!lua_isnil(L, -1))
         msg_Warn(obj, "Playlist item duration should be a number (seconds)");
     lua_pop( L, 1 ); /* pop "duration" */

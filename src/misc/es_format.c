@@ -424,7 +424,7 @@ void video_format_Print( vlc_object_t *p_this,
                          const char *psz_text, const video_format_t *fmt )
 {
     msg_Dbg( p_this,
-             "%s sz %ix%i, of (%i,%i), vsz %ix%i, 4cc %4.4s, sar %i:%i, msk r0x%x g0x%x b0x%x",
+             "%s sz %ux%u, of (%u,%u), vsz %ux%u, 4cc %4.4s, sar %u:%u, msk r0x%" PRIx32 " g0x%" PRIx32 " b0x%" PRIx32,
              psz_text,
              fmt->i_width, fmt->i_height, fmt->i_x_offset, fmt->i_y_offset,
              fmt->i_visible_width, fmt->i_visible_height,
@@ -591,7 +591,7 @@ bool es_format_IsSimilar( const es_format_t *p_fmt1, const es_format_t *p_fmt2 )
             v1.i_chroma = vlc_fourcc_GetCodec( p_fmt1->i_cat, p_fmt1->i_codec );
         if( !v2.i_chroma )
             v2.i_chroma = vlc_fourcc_GetCodec( p_fmt2->i_cat, p_fmt2->i_codec );
-        return video_format_IsSimilar( &p_fmt1->video, &p_fmt2->video );
+        return video_format_IsSimilar( &v1, &v2 );
     }
 
     case SPU_ES:

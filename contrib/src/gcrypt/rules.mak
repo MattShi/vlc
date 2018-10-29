@@ -1,6 +1,6 @@
 # GCRYPT
-GCRYPT_VERSION := 1.7.8
-GCRYPT_URL := ftp://ftp.gnupg.org/gcrypt/libgcrypt/libgcrypt-$(GCRYPT_VERSION).tar.bz2
+GCRYPT_VERSION := 1.7.10
+GCRYPT_URL := http://www.gnupg.org/ftp/gcrypt/libgcrypt/libgcrypt-$(GCRYPT_VERSION).tar.bz2
 
 PKGS += gcrypt
 
@@ -13,6 +13,8 @@ gcrypt: libgcrypt-$(GCRYPT_VERSION).tar.bz2 .sum-gcrypt
 	$(UNPACK)
 	$(APPLY) $(SRC)/gcrypt/disable-tests-compilation.patch
 	$(APPLY) $(SRC)/gcrypt/fix-pthread-detection.patch
+	$(APPLY) $(SRC)/gcrypt/0001-random-Don-t-assume-that-_WIN64-implies-x86_64.patch
+	$(APPLY) $(SRC)/gcrypt/0002-aarch64-mpi-Fix-building-the-mpi-aarch64-assembly-fo.patch
 ifdef HAVE_WINSTORE
 	$(APPLY) $(SRC)/gcrypt/winrt.patch
 endif
@@ -66,6 +68,12 @@ ifdef HAVE_TIZEN
 ifeq ($(TIZEN_ABI), x86)
 GCRYPT_CONF += ac_cv_sys_symbol_underscore=no
 endif
+endif
+ifdef HAVE_NACL
+GCRYPT_CONF += --disable-asm --disable-aesni-support ac_cv_func_syslog=no --disable-sse41-support
+GCRYPT_CONF += --disable-avx-support --disable-avx2-support --disable-padlock-support
+GCRYPT_CONF += --disable-amd64-as-feature-detection --disable-drng-support
+GCRYPT_CONF += --disable-pclmul-support
 endif
 
 .gcrypt: gcrypt

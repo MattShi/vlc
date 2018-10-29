@@ -44,7 +44,7 @@
 #include "dbus_common.h"
 
 static const char ppsz_supported_uri_schemes[][9] = {
-    "file", "http", "https", "rtsp", "realrtsp", "pnm", "ftp", "mtp", "smb",
+    "file", "http", "https", "rtsp", "ftp", "mtp", "smb",
     "mms", "mmsu", "mmst", "mmsh", "unsv", "itpc", "icyx", "rtmp", "rtp",
     "dccp", "dvd", "vcd"
 };
@@ -268,7 +268,7 @@ DBUS_METHOD( Quit )
 DBUS_METHOD( Raise )
 {/* shows vlc's main window */
     REPLY_INIT;
-    var_ToggleBool( INTF->obj.libvlc, "intf-show" );
+    var_TriggerCallback( pl_Get(INTF), "intf-show" );
     REPLY_SEND;
 }
 

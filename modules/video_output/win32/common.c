@@ -56,6 +56,16 @@ static bool GetRect(const vout_display_sys_t *sys, RECT *out)
 }
 #endif
 
+static unsigned int GetPictureWidth(const vout_display_t *vd)
+{
+    return vd->fmt.i_width;
+}
+
+static unsigned int GetPictureHeight(const vout_display_t *vd)
+{
+    return vd->fmt.i_height;
+}
+
 /* */
 int CommonInit(vout_display_t *vd)
 {
@@ -69,6 +79,8 @@ int CommonInit(vout_display_t *vd)
     sys->is_first_display = true;
     sys->is_on_top        = false;
 
+    sys->pf_GetPictureWidth  = GetPictureWidth;
+    sys->pf_GetPictureHeight = GetPictureHeight;
 #if !VLC_WINSTORE_APP
     sys->pf_GetRect = GetRect;
     SetRectEmpty(&sys->rect_display);
@@ -109,7 +121,7 @@ int CommonInit(vout_display_t *vd)
 
     if (vd->cfg->is_fullscreen) {
         if (CommonControlSetFullscreen(vd, true))
-            vout_display_SendEventFullscreen(vd, false, false);
+            vout_display_SendEventFullscreen(vd, false);
     }
 
 #endif
@@ -118,13 +130,6 @@ int CommonInit(vout_display_t *vd)
 #endif
 
     return VLC_SUCCESS;
-}
-
-/* */
-picture_pool_t *CommonPool(vout_display_t *vd, unsigned count)
-{
-    VLC_UNUSED(count);
-    return vd->sys->pool;
 }
 
 /*****************************************************************************
@@ -170,13 +175,15 @@ void UpdateRects(vout_display_t *vd,
     is_resized = rect.right != (sys->rect_display.right - sys->rect_display.left) ||
         rect.bottom != (sys->rect_display.bottom - sys->rect_display.top);
     sys->rect_display = rect;
+#if 0 /* this may still be needed */
+    if (is_resized)
+        vout_display_SendEventDisplaySize(vd, rect.right, rect.bottom);
+#endif
 #else
     EventThreadUpdateWindowPosition(sys->event, &has_moved, &is_resized,
         point.x, point.y,
         rect.right, rect.bottom);
 #endif
-    if (is_resized)
-        vout_display_SendEventDisplaySize(vd, rect.right, rect.bottom);
     if (!is_forced && !has_moved && !is_resized)
         return;
 
@@ -262,8 +269,8 @@ void UpdateRects(vout_display_t *vd,
     /* src image dimensions */
     rect_src.left = 0;
     rect_src.top = 0;
-    rect_src.right = vd->fmt.i_width;
-    rect_src.bottom = vd->fmt.i_height;
+    rect_src.right = sys->pf_GetPictureWidth(vd);
+    rect_src.bottom = sys->pf_GetPictureHeight(vd);
 
     /* Clip the source image */
     rect_src_clipped.left = source->i_x_offset +

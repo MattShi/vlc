@@ -53,8 +53,10 @@ namespace adaptive
                 void                setBytesRange   (const BytesRange &);
                 const BytesRange &  getBytesRange   () const;
                 virtual std::string getContentType  () const;
+                enum RequestStatus  getRequestStatus() const;
 
             protected:
+                enum RequestStatus  requeststatus;
                 size_t              contentLength;
                 BytesRange          bytesRange;
         };
@@ -65,6 +67,7 @@ namespace adaptive
                 virtual ~AbstractChunk();
 
                 std::string         getContentType          ();
+                enum RequestStatus  getRequestStatus        () const;
                 size_t              getBytesRead            () const;
                 uint64_t            getStartByteInFile      () const;
                 bool                isEmpty                 () const;
@@ -82,11 +85,12 @@ namespace adaptive
                 block_t *           doRead(size_t, bool);
         };
 
-        class HTTPChunkSource : public AbstractChunkSource
+        class HTTPChunkSource : public AbstractChunkSource,
+                                public BackendPrefInterface
         {
             public:
                 HTTPChunkSource(const std::string &url, AbstractConnectionManager *,
-                                const ID &);
+                                const ID &, bool = false);
                 virtual ~HTTPChunkSource();
 
                 virtual block_t *   readBlock       (); /* impl */
@@ -100,6 +104,7 @@ namespace adaptive
                 virtual bool        prepare();
                 AbstractConnection    *connection;
                 AbstractConnectionManager *connManager;
+                mutable vlc_mutex_t lock;
                 size_t              consumed; /* read pointer */
                 bool                prepared;
                 bool                eof;
@@ -116,7 +121,7 @@ namespace adaptive
 
             public:
                 HTTPChunkBufferedSource(const std::string &url, AbstractConnectionManager *,
-                                        const ID &);
+                                        const ID &, bool = false);
                 virtual ~HTTPChunkBufferedSource();
                 virtual block_t *  readBlock       (); /* reimpl */
                 virtual block_t *  read            (size_t); /* reimpl */
@@ -135,8 +140,7 @@ namespace adaptive
                 size_t              buffered; /* read cache size */
                 bool                done;
                 bool                eof;
-                mtime_t             downloadstart;
-                mutable vlc_mutex_t lock;
+                vlc_tick_t          downloadstart;
                 vlc_cond_t          avail;
                 bool                held;
         };
@@ -145,12 +149,11 @@ namespace adaptive
         {
             public:
                 HTTPChunk(const std::string &url, AbstractConnectionManager *,
-                          const ID &);
+                          const ID &, bool = false);
                 virtual ~HTTPChunk();
 
                 virtual void        onDownload      (block_t **) {} /* impl */
         };
-
     }
 }
 

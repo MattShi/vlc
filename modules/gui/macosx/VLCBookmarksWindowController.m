@@ -107,7 +107,7 @@
     if ([self.window isVisible])
         [self.window orderOut:sender];
     else {
-        [self.window setLevel: [[[VLCMain sharedInstance] voutController] currentStatusWindowLevel]];
+        [self.window setLevel: [[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
         [self.window makeKeyAndOrderFront:sender];
     }
 }
@@ -160,8 +160,7 @@
     input_thread_t * p_input = pl_CurrentInput(getIntf());
     seekpoint_t **pp_bookmarks;
     int i_bookmarks;
-    int row;
-    row = [_dataTable selectedRow];
+    int row = (int)[_dataTable selectedRow];
 
     if (!p_input)
         return;
@@ -185,7 +184,7 @@
     p_old_input = p_input;
     vlc_object_release(p_input);
 
-    [NSApp beginSheet: _editBookmarksWindow modalForWindow: self.window modalDelegate: _editBookmarksWindow didEndSelector: nil contextInfo: nil];
+    [self.window beginSheet:_editBookmarksWindow completionHandler:nil];
 
     // Clear the bookmark list
     for (int i = 0; i < i_bookmarks; i++)
@@ -204,15 +203,26 @@
 {
     /* save field contents and close sheet */
      seekpoint_t **pp_bookmarks;
-    int i_bookmarks, i;
+    int i_bookmarks;
+    NSInteger i;
     input_thread_t * p_input = pl_CurrentInput(getIntf());
 
     if (!p_input) {
-        NSBeginCriticalAlertSheet(_NS("No input"), _NS("OK"), @"", @"", self.window, nil, nil, nil, nil, @"%@",_NS("No input found. A stream must be playing or paused for bookmarks to work."));
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSCriticalAlertStyle];
+        [alert setMessageText:_NS("No input")];
+        [alert setInformativeText:_NS("No input found. A stream must be playing or paused for bookmarks to work.")];
+        [alert beginSheetModalForWindow:self.window
+                      completionHandler:nil];
         return;
     }
     if (p_old_input != p_input) {
-        NSBeginCriticalAlertSheet(_NS("Input has changed"), _NS("OK"), @"", @"", self.window, nil, nil, nil, nil, @"%@",_NS("Input has changed, unable to save bookmark. Suspending playback with \"Pause\" while editing bookmarks to ensure to keep the same input."));
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSCriticalAlertStyle];
+        [alert setMessageText:_NS("Input has changed")];
+        [alert setInformativeText:_NS("Input has changed, unable to save bookmark. Suspending playback with \"Pause\" while editing bookmarks to ensure to keep the same input.")];
+        [alert beginSheetModalForWindow:self.window
+                      completionHandler:nil];
         vlc_object_release(p_input);
         return;
     }
@@ -231,11 +241,11 @@
     NSArray * components = [[_editTimeTextField stringValue] componentsSeparatedByString:@":"];
     NSUInteger componentCount = [components count];
     if (componentCount == 1)
-        pp_bookmarks[i]->i_time_offset = 1000000LL * ([[components firstObject] floatValue]);
+        pp_bookmarks[i]->i_time_offset = vlc_tick_from_sec([[components firstObject] floatValue]);
     else if (componentCount == 2)
-        pp_bookmarks[i]->i_time_offset = 1000000LL * ([[components firstObject] longLongValue] * 60 + [[components objectAtIndex:1] longLongValue]);
+        pp_bookmarks[i]->i_time_offset = vlc_tick_from_sec([[components firstObject] longLongValue] * 60 + [[components objectAtIndex:1] longLongValue]);
     else if (componentCount == 3)
-        pp_bookmarks[i]->i_time_offset = 1000000LL * ([[components firstObject] longLongValue] * 3600 + [[components objectAtIndex:1] longLongValue] * 60 + [[components objectAtIndex:2] floatValue]);
+        pp_bookmarks[i]->i_time_offset = vlc_tick_from_sec([[components firstObject] longLongValue] * 3600 + [[components objectAtIndex:1] longLongValue] * 60 + [[components objectAtIndex:2] floatValue]);
     else {
         msg_Err(getIntf(), "Invalid string format for time");
         goto clear;
@@ -279,7 +289,7 @@ clear:
     if (!p_input)
         return;
 
-    int i_focused = [_dataTable selectedRow];
+    int i_focused = (int)[_dataTable selectedRow];
 
     if (i_focused >= 0)
         input_Control(p_input, INPUT_DEL_BOOKMARK, i_focused);
@@ -293,10 +303,10 @@ clear:
 {
     assert(bookmark != NULL);
 
-    mtime_t total = bookmark->i_time_offset;
-    uint64_t hour = ( total / ( CLOCK_FREQ * 3600 ) );
-    uint64_t min = ( total % ( CLOCK_FREQ * 3600 ) ) / ( CLOCK_FREQ * 60 );
-    float    sec = ( total % ( CLOCK_FREQ * 60 ) ) / ( CLOCK_FREQ * 1. );
+    vlc_tick_t total = bookmark->i_time_offset;
+    uint64_t hour = ( total / VLC_TICK_FROM_SEC(3600) );
+    uint64_t min = ( total % VLC_TICK_FROM_SEC(3600) ) / VLC_TICK_FROM_SEC(60);
+    float    sec = secf_from_vlc_tick( total % VLC_TICK_FROM_SEC(60) );
 
     return [NSString stringWithFormat:@"%02llu:%02llu:%06.3f", hour, min, sec];
 }

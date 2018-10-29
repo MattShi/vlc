@@ -32,6 +32,7 @@
 #include <vlc_common.h>
 #include <vlc_block.h>
 #include <vlc_sout.h>
+#include <vlc_es.h>
 
 #include <libavformat/avformat.h>
 
@@ -50,7 +51,7 @@ static const char *const ppsz_mux_options[] = {
 /*****************************************************************************
  * mux_sys_t: mux descriptor
  *****************************************************************************/
-struct sout_mux_sys_t
+typedef struct
 {
     AVIOContext     *io;
     int             io_buffer_size;
@@ -64,7 +65,7 @@ struct sout_mux_sys_t
 #if LIBAVFORMAT_VERSION_CHECK( 57, 7, 0, 40, 100 )
     bool     b_header_done;
 #endif
-};
+} sout_mux_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -285,6 +286,15 @@ static int AddStream( sout_mux_t *p_mux, sout_input_t *p_input )
         stream->sample_aspect_ratio.num = codecpar->sample_aspect_ratio.num;
         stream->time_base.den = i_frame_rate;
         stream->time_base.num = i_frame_rate_base;
+        if(i_codec_id == AV_CODEC_ID_RAWVIDEO)
+        {
+            video_format_t vfmt;
+            video_format_Copy(&vfmt, &fmt->video);
+            video_format_FixRgb(&vfmt);
+            if(GetFfmpegChroma(&codecpar->format, &vfmt))
+                msg_Warn(p_mux, "can't match format RAW video %4.4s", &vfmt.i_chroma);
+            video_format_Clean(&vfmt);
+        }
         if (fmt->i_bitrate == 0) {
             msg_Warn( p_mux, "Missing video bitrate, assuming 512k" );
             i_bitrate = 512000;
@@ -361,11 +371,11 @@ static int MuxBlock( sout_mux_t *p_mux, sout_input_t *p_input )
     }
 
     if( p_data->i_pts > 0 )
-        pkt.pts = p_data->i_pts * p_stream->time_base.den /
-            CLOCK_FREQ / p_stream->time_base.num;
+        pkt.pts = TO_AV_TS(p_data->i_pts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num);
     if( p_data->i_dts > 0 )
-        pkt.dts = p_data->i_dts * p_stream->time_base.den /
-            CLOCK_FREQ / p_stream->time_base.num;
+        pkt.dts = TO_AV_TS(p_data->i_dts * p_stream->time_base.den /
+            CLOCK_FREQ / p_stream->time_base.num);
 
     /* this is another hack to prevent libavformat from triggering the "non monotone timestamps" check in avformat/utils.c */
     p_stream->cur_dts = ( p_data->i_dts * p_stream->time_base.den /
@@ -440,7 +450,7 @@ static int Mux( sout_mux_t *p_mux )
 
     for( ;; )
     {
-        mtime_t i_dts;
+        vlc_tick_t i_dts;
 
         int i_stream = sout_MuxGetStream( p_mux, 1, &i_dts );
         if( i_stream < 0 )
@@ -474,7 +484,8 @@ static int Control( sout_mux_t *p_mux, int i_query, va_list args )
     case MUX_GET_MIME:
     {
         char **ppsz = va_arg( args, char ** );
-        *ppsz = strdup( p_mux->p_sys->oc->oformat->mime_type );
+        sout_mux_sys_t *p_sys = p_mux->p_sys;
+        *ppsz = strdup( p_sys->oc->oformat->mime_type );
         return VLC_SUCCESS;
     }
 

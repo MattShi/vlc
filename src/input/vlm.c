@@ -111,14 +111,13 @@ static int InputEvent( vlc_object_t *p_this, char const *psz_cmd,
 
 static vlc_mutex_t vlm_mutex = VLC_STATIC_MUTEX;
 
-#undef vlm_New
 /*****************************************************************************
  * vlm_New:
  *****************************************************************************/
-vlm_t *vlm_New ( vlc_object_t *p_this )
+vlm_t *vlm_New( libvlc_int_t *libvlc, const char *psz_vlmconf )
 {
-    vlm_t *p_vlm = NULL, **pp_vlm = &(libvlc_priv (p_this->obj.libvlc)->p_vlm);
-    char *psz_vlmconf;
+    vlm_t *p_vlm = NULL, **pp_vlm = &(libvlc_priv(libvlc)->p_vlm);
+    vlc_object_t *p_this = VLC_OBJECT(libvlc);
 
     /* Avoid multiple creation */
     vlc_mutex_lock( &vlm_mutex );
@@ -167,9 +166,10 @@ vlm_t *vlm_New ( vlc_object_t *p_this )
 
     *pp_vlm = p_vlm; /* for future reference */
 
+    vlc_mutex_unlock( &vlm_mutex );
+
     /* Load our configuration file */
-    psz_vlmconf = var_CreateGetString( p_vlm, "vlm-conf" );
-    if( psz_vlmconf && *psz_vlmconf )
+    if( psz_vlmconf != NULL )
     {
         vlm_message_t *p_message = NULL;
         char *psz_buffer = NULL;
@@ -185,9 +185,6 @@ vlm_t *vlm_New ( vlc_object_t *p_this )
             free( psz_buffer );
         }
     }
-    free( psz_vlmconf );
-
-    vlc_mutex_unlock( &vlm_mutex );
 
     return p_vlm;
 }
@@ -449,10 +446,12 @@ static void* Manage( void* p_object )
 
             if( vlm->schedule[i]->b_enabled )
             {
+                bool b_now = false;
                 if( vlm->schedule[i]->date == 0 ) // now !
                 {
                     vlm->schedule[i]->date = now;
                     real_date = now;
+                    b_now = true;
                 }
                 else if( vlm->schedule[i]->period != 0 )
                 {
@@ -471,7 +470,7 @@ static void* Manage( void* p_object )
 
                 if( real_date <= now )
                 {
-                    if( real_date > lastcheck )
+                    if( real_date > lastcheck || b_now )
                     {
                         for( int j = 0; j < vlm->schedule[i]->i_command; j++ )
                         {
@@ -624,7 +623,8 @@ static int vlm_OnMediaUpdate( vlm_t *p_vlm, vlm_media_sys_t *p_media )
             sout_description_data_t data;
             TAB_INIT(data.i_es, data.es);
 
-            p_input = input_Create( p_vlm->p_vod, p_media->vod.p_item, psz_header, NULL, NULL );
+            p_input = input_Create( p_vlm->p_vod, input_LegacyEvents, NULL,
+                                    p_media->vod.p_item, psz_header, NULL, NULL );
             if( p_input )
             {
                 vlc_sem_t sem_preparse;
@@ -632,6 +632,7 @@ static int vlm_OnMediaUpdate( vlm_t *p_vlm, vlm_media_sys_t *p_media )
 
                 preparse_data_t preparse = { .p_sem = &sem_preparse,
                                     .b_mux = (p_cfg->vod.psz_mux != NULL) };
+                input_LegacyVarInit( p_input );
                 var_AddCallback( p_input, "intf-event", InputEventPreparse,
                                  &preparse );
 
@@ -997,11 +998,13 @@ static int vlm_ControlMediaInstanceStart( vlm_t *p_vlm, int64_t id, const char *
     if( asprintf( &psz_log, _("Media: %s"), p_media->cfg.psz_name ) != -1 )
     {
         p_instance->p_input = input_Create( p_instance->p_parent,
+                                            input_LegacyEvents, NULL,
                                             p_instance->p_item, psz_log,
                                             p_instance->p_input_resource,
                                             NULL );
         if( p_instance->p_input )
         {
+            input_LegacyVarInit( p_instance->p_input );
             var_AddCallback( p_instance->p_input, "intf-event", InputEvent, p_media );
 
             if( input_Start( p_instance->p_input ) != VLC_SUCCESS )
@@ -1076,7 +1079,7 @@ static int vlm_ControlMediaInstanceGetTimePosition( vlm_t *p_vlm, int64_t id, co
         return VLC_EGENERIC;
 
     if( pi_time )
-        *pi_time = var_GetInteger( p_instance->p_input, "time" );
+        *pi_time = US_FROM_VLC_TICK(var_GetInteger( p_instance->p_input, "time" ));
     if( pd_position )
         *pd_position = var_GetFloat( p_instance->p_input, "position" );
     return VLC_SUCCESS;
@@ -1094,7 +1097,7 @@ static int vlm_ControlMediaInstanceSetTimePosition( vlm_t *p_vlm, int64_t id, co
         return VLC_EGENERIC;
 
     if( i_time >= 0 )
-        return var_SetInteger( p_instance->p_input, "time", i_time );
+        return var_SetInteger( p_instance->p_input, "time", VLC_TICK_FROM_US(i_time) );
     else if( d_position >= 0 && d_position <= 100 )
         return var_SetFloat( p_instance->p_input, "position", d_position );
     return VLC_EGENERIC;
@@ -1119,8 +1122,8 @@ static int vlm_ControlMediaInstanceGets( vlm_t *p_vlm, int64_t id, vlm_media_ins
             p_idsc->psz_name = strdup( p_instance->psz_name );
         if( p_instance->p_input )
         {
-            p_idsc->i_time = var_GetInteger( p_instance->p_input, "time" );
-            p_idsc->i_length = var_GetInteger( p_instance->p_input, "length" );
+            p_idsc->i_time = US_FROM_VLC_TICK(var_GetInteger( p_instance->p_input, "time" ));
+            p_idsc->i_length = US_FROM_VLC_TICK(var_GetInteger( p_instance->p_input, "length" ));
             p_idsc->d_position = var_GetFloat( p_instance->p_input, "position" );
             if( var_GetInteger( p_instance->p_input, "state" ) == PAUSE_S )
                 p_idsc->b_paused = true;

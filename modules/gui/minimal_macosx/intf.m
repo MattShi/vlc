@@ -104,15 +104,14 @@ static int WindowControl(vout_window_t *, int i_query, va_list);
 
 int WindowOpen(vout_window_t *p_wnd, const vout_window_cfg_t *cfg)
 {
-    if (cfg->type != VOUT_WINDOW_TYPE_INVALID
-     && cfg->type != VOUT_WINDOW_TYPE_NSOBJECT)
-        return VLC_EGENERIC;
-
     @autoreleasepool {
+        VLCMinimalVoutWindow __block *o_window;
         NSRect proposedVideoViewPosition = NSMakeRect(cfg->x, cfg->y, cfg->width, cfg->height);
 
-        VLCMinimalVoutWindow *o_window = [[VLCMinimalVoutWindow alloc] initWithContentRect:proposedVideoViewPosition];
-        [o_window makeKeyAndOrderFront:nil];
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            o_window = [[VLCMinimalVoutWindow alloc] initWithContentRect:proposedVideoViewPosition];
+            [o_window makeKeyAndOrderFront:nil];
+        });
 
         if (!o_window) {
             msg_Err(p_wnd, "window creation failed");
@@ -126,7 +125,8 @@ int WindowOpen(vout_window_t *p_wnd, const vout_window_cfg_t *cfg)
         p_wnd->control = WindowControl;
     }
 
-    vout_window_SetFullScreen(p_wnd, cfg->is_fullscreen);
+    if (cfg->is_fullscreen)
+        vout_window_SetFullScreen(p_wnd, NULL);
     return VLC_SUCCESS;
 }
 
@@ -162,8 +162,9 @@ static int WindowControl(vout_window_t *p_wnd, int i_query, va_list args)
             return VLC_SUCCESS;
         }
         case VOUT_WINDOW_SET_FULLSCREEN:
+        case VOUT_WINDOW_UNSET_FULLSCREEN:
         {
-            int i_full = va_arg(args, int);
+            int i_full = i_query == VOUT_WINDOW_SET_FULLSCREEN;
             @autoreleasepool {
                 dispatch_sync(dispatch_get_main_queue(), ^{
                     if (i_full)

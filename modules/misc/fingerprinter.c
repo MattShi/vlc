@@ -30,7 +30,6 @@
 #include <vlc_meta.h>
 #include <vlc_url.h>
 
-#include <vlc/vlc.h>
 #include <vlc_input.h>
 #include <vlc_fingerprinter.h>
 #include "webservices/acoustid.h"
@@ -129,17 +128,14 @@ static void ApplyResult( fingerprint_request_t *p_r, size_t i_resultid )
     vlc_mutex_unlock( &p_item->lock );
 }
 
-static int InputEventHandler( vlc_object_t *p_this, char const *psz_cmd,
-                              vlc_value_t oldval, vlc_value_t newval,
-                              void *p_data )
+static void InputEvent( input_thread_t *p_input,
+                        const struct vlc_input_event *p_event, void *p_user_data )
 {
-    VLC_UNUSED( psz_cmd );
-    VLC_UNUSED( oldval );
-    input_thread_t *p_input = (input_thread_t *) p_this;
-    fingerprinter_sys_t *p_sys = (fingerprinter_sys_t *) p_data;
-    if( newval.i_int == INPUT_EVENT_STATE )
+    VLC_UNUSED( p_input );
+    fingerprinter_sys_t *p_sys = p_user_data;
+    if( p_event->type == INPUT_EVENT_STATE )
     {
-        if( var_GetInteger( p_input, "state" ) >= PAUSE_S )
+        if( p_event->state >= PAUSE_S )
         {
             vlc_mutex_lock( &p_sys->processing.lock );
             p_sys->processing.b_working = false;
@@ -147,7 +143,6 @@ static int InputEventHandler( vlc_object_t *p_this, char const *psz_cmd,
             vlc_mutex_unlock( &p_sys->processing.lock );
         }
     }
-    return VLC_SUCCESS;
 }
 
 static void DoFingerprint( fingerprinter_thread_t *p_fingerprinter,
@@ -186,7 +181,9 @@ static void DoFingerprint( fingerprinter_thread_t *p_fingerprinter,
     }
     input_item_SetURI( p_item, psz_uri ) ;
 
-    input_thread_t *p_input = input_Create( p_fingerprinter, p_item, "fingerprinter", NULL, NULL );
+    input_thread_t *p_input = input_Create( p_fingerprinter, InputEvent,
+                                            p_fingerprinter->p_sys,
+                                            p_item, "fingerprinter", NULL, NULL );
     input_item_Release( p_item );
 
     if( p_input == NULL )
@@ -200,13 +197,8 @@ static void DoFingerprint( fingerprinter_thread_t *p_fingerprinter,
     var_Create( p_input, "fingerprint-data", VLC_VAR_ADDRESS );
     var_SetAddress( p_input, "fingerprint-data", &chroma_fingerprint );
 
-    var_AddCallback( p_input, "intf-event", InputEventHandler, p_fingerprinter->p_sys );
-
     if( input_Start( p_input ) != VLC_SUCCESS )
-    {
-        var_DelCallback( p_input, "intf-event", InputEventHandler, p_fingerprinter->p_sys );
         input_Close( p_input );
-    }
     else
     {
         p_fingerprinter->p_sys->processing.b_working = true;
@@ -215,7 +207,6 @@ static void DoFingerprint( fingerprinter_thread_t *p_fingerprinter,
             vlc_cond_wait( &p_fingerprinter->p_sys->processing.cond,
                            &p_fingerprinter->p_sys->processing.lock );
         }
-        var_DelCallback( p_input, "intf-event", InputEventHandler, p_fingerprinter->p_sys );
         input_Stop( p_input );
         input_Close( p_input );
 
@@ -337,16 +328,17 @@ static void *Run( void *opaque )
     /* main loop */
     for (;;)
     {
-        msleep( CLOCK_FREQ );
+        vlc_tick_sleep( VLC_TICK_FROM_SEC(1) );
 
         QueueIncomingRequests( p_sys );
 
         vlc_testcancel();
 
-        for ( size_t i = 0 ; i < vlc_array_count( &p_sys->processing.queue ); i++ )
+        bool results_available = false;
+        while( vlc_array_count( &p_sys->processing.queue ) )
         {
             int canc = vlc_savecancel();
-            fingerprint_request_t *p_data = vlc_array_item_at_index( &p_sys->processing.queue, i );
+            fingerprint_request_t *p_data = vlc_array_item_at_index( &p_sys->processing.queue, 0 );
 
             char *psz_uri = input_item_GetURI( p_data->p_item );
             if ( psz_uri != NULL )
@@ -376,15 +368,21 @@ static void *Run( void *opaque )
             vlc_mutex_lock( &p_sys->results.lock );
             if( vlc_array_append( &p_sys->results.queue, p_data ) )
                 fingerprint_request_Delete( p_data );
+            else
+                results_available = true;
             vlc_mutex_unlock( &p_sys->results.lock );
+
+            // the fingerprint request must not exist both in the
+            // processing and results queue, even in case of thread
+            // cancellation, so remove it immediately
+            vlc_array_remove( &p_sys->processing.queue, 0 );
 
             vlc_testcancel();
         }
 
-        if ( vlc_array_count( &p_sys->processing.queue ) )
+        if ( results_available )
         {
             var_TriggerCallback( p_fingerprinter, "results-available" );
-            vlc_array_clear( &p_sys->processing.queue );
         }
     }
 

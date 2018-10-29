@@ -8,7 +8,7 @@ OPENGL_COMMONSOURCES = video_output/opengl/vout_helper.c \
 	video_output/opengl/internal.h video_output/opengl/fragment_shaders.c \
 	video_output/opengl/converter_sw.c
 
-OPENGL_COMMONCLFAGS = $(LIBPLACEBO_CFLAGS)
+OPENGL_COMMONCFLAGS = $(LIBPLACEBO_CFLAGS)
 OPENGL_COMMONLIBS = $(LIBPLACEBO_LIBS)
 
 if HAVE_DECKLINK
@@ -24,13 +24,13 @@ libglconv_cvpx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
 
 if HAVE_OSX
 libvout_macosx_plugin_la_SOURCES = video_output/macosx.m $(OPENGL_COMMONSOURCES)
-libvout_macosx_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCLFAGS) -DHAVE_GL_CORE_SYMBOLS
+libvout_macosx_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCFLAGS) -DHAVE_GL_CORE_SYMBOLS
 libvout_macosx_plugin_la_LIBADD = $(OPENGL_COMMONLIBS)
 libvout_macosx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)' \
 	-Wl,-framework,OpenGL,-framework,Cocoa
 
 libcaopengllayer_plugin_la_SOURCES = video_output/caopengllayer.m $(OPENGL_COMMONSOURCES)
-libcaopengllayer_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCLFAGS) -DHAVE_GL_CORE_SYMBOLS
+libcaopengllayer_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCFLAGS) -DHAVE_GL_CORE_SYMBOLS
 libcaopengllayer_plugin_la_LIBADD = $(OPENGL_COMMONLIBS)
 libcaopengllayer_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)' \
 	-Wl,-framework,OpenGL,-framework,Cocoa,-framework,QuartzCore
@@ -46,7 +46,7 @@ libglconv_cvpx_plugin_la_CFLAGS = $(AM_CFLAGS) -DUSE_OPENGL_ES2
 endif
 
 libvout_ios_plugin_la_SOURCES = video_output/ios.m $(OPENGL_COMMONSOURCES)
-libvout_ios_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCLFAGS) -DUSE_OPENGL_ES2
+libvout_ios_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCFLAGS) -DUSE_OPENGL_ES2
 libvout_ios_plugin_la_LIBADD = $(OPENGL_COMMONLIBS)
 libvout_ios_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)' \
 	-Wl,-framework,OpenGLES,-framework,QuartzCore,-framework,UIKit
@@ -54,12 +54,12 @@ if HAVE_IOS
 vout_LTLIBRARIES += libvout_ios_plugin.la libglconv_cvpx_plugin.la
 endif
 if HAVE_TVOS
-vout_LTLIBRARIES += libvout_ios_plugin.la
+vout_LTLIBRARIES += libvout_ios_plugin.la libglconv_cvpx_plugin.la
 endif
 
 ### OpenGL ###
 libgles2_plugin_la_SOURCES = $(OPENGL_COMMONSOURCES) video_output/opengl/display.c
-libgles2_plugin_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) -DUSE_OPENGL_ES2 $(OPENGL_COMMONCLFAGS)
+libgles2_plugin_la_CFLAGS = $(AM_CFLAGS) $(GLES2_CFLAGS) -DUSE_OPENGL_ES2 $(OPENGL_COMMONCFLAGS)
 libgles2_plugin_la_LIBADD = $(GLES2_LIBS) $(LIBM) $(OPENGL_COMMONLIBS)
 libgles2_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
 
@@ -67,7 +67,7 @@ EXTRA_LTLIBRARIES += libgles2_plugin.la
 vout_LTLIBRARIES += $(LTLIBgles2)
 
 libgl_plugin_la_SOURCES = $(OPENGL_COMMONSOURCES) video_output/opengl/display.c
-libgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(GL_CFLAGS) $(OPENGL_COMMONCLFAGS)
+libgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(GL_CFLAGS) $(OPENGL_COMMONCFLAGS)
 libgl_plugin_la_LIBADD = $(LIBM) $(OPENGL_COMMONLIBS)
 if HAVE_WIN32
 libgl_plugin_la_CFLAGS += -DHAVE_GL_CORE_SYMBOLS
@@ -100,7 +100,7 @@ if HAVE_GL
 vout_LTLIBRARIES += libgl_plugin.la
 if HAVE_EGL
 if HAVE_VAAPI
-if HAVE_WAYLAND_EGL
+if HAVE_WAYLAND
 if HAVE_VAAPI_WL
 vout_LTLIBRARIES += libglconv_vaapi_wl_plugin.la
 endif
@@ -147,14 +147,13 @@ libxcb_xv_plugin_la_CFLAGS = $(AM_CFLAGS) \
 libxcb_xv_plugin_la_LIBADD = libvlc_xcb_events.la \
 	$(XCB_LIBS) $(XCB_SHM_LIBS) $(XCB_XV_LIBS)
 
-libxcb_window_plugin_la_SOURCES =  \
-	video_output/xcb/keys.c \
-	video_output/xcb/keysym.h video_output/xcb/xcb_keysym.h \
-	video_output/xcb/window.c
+libxcb_window_plugin_la_SOURCES = video_output/xcb/window.c
 libxcb_window_plugin_la_CFLAGS = $(AM_CFLAGS) \
 	$(CFLAGS_xcb_window) \
-	$(XPROTO_CFLAGS) $(XCB_CFLAGS) $(XCB_KEYSYMS_CFLAGS)
-libxcb_window_plugin_la_LIBADD = $(XPROTO_LIBS) $(XCB_LIBS) $(XCB_KEYSYMS_LIBS)
+	$(XPROTO_CFLAGS) $(XCB_CFLAGS) \
+	$(XCB_XKB_CFLAGS) $(XKBCOMMON_X11_CFLAGS)
+libxcb_window_plugin_la_LIBADD = $(XPROTO_LIBS) $(XCB_LIBS) \
+	$(XCB_XKB_LIBS) $(XKBCOMMON_X11_LIBS)
 
 libegl_x11_plugin_la_SOURCES = video_output/opengl/egl.c
 libegl_x11_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DUSE_PLATFORM_X11=1
@@ -168,12 +167,13 @@ libglx_plugin_la_LIBADD = $(GL_LIBS) $(X_LIBS) $(X_PRE_LIBS) -lX11
 if HAVE_XCB
 pkglib_LTLIBRARIES += libvlc_xcb_events.la
 vout_LTLIBRARIES += libxcb_x11_plugin.la libxcb_window_plugin.la
-if HAVE_XCB_KEYSYMS
-libxcb_window_plugin_la_CFLAGS += -DHAVE_XCB_KEYSYMS
+if HAVE_XKBCOMMON_X11
+libxcb_window_plugin_la_SOURCES += \
+	video_output/xcb/keysym.h video_output/xcb/xcb_keysym.h \
+	video_output/xcb/vlc_xkb.h video_output/xcb/xkb.c
+libxcb_window_plugin_la_CFLAGS += -DHAVE_XKBCOMMON
 endif
-if HAVE_XCB_XVIDEO
 vout_LTLIBRARIES += libxcb_xv_plugin.la
-endif
 if HAVE_EGL
 vout_LTLIBRARIES += libegl_x11_plugin.la
 endif
@@ -200,30 +200,49 @@ video_output/wayland/viewporter-client-protocol.h: \
 
 video_output/wayland/viewporter-protocol.c: \
 		$(WAYLAND_PROTOCOLS)/stable/viewporter/viewporter.xml
-	$(AM_V_GEN)$(WAYLAND_SCANNER) code $< $@
+	$(AM_V_GEN)$(WAYLAND_SCANNER) private-code $< $@
 
-libwl_shell_plugin_la_SOURCES = video_output/wayland/shell.c
-libwl_shell_plugin_la_CFLAGS = $(WAYLAND_CLIENT_CFLAGS)
-libwl_shell_plugin_la_LIBADD = $(WAYLAND_CLIENT_LIBS) $(LIBPTHREAD)
+libwl_shell_plugin_la_SOURCES = $(libxdg_shell_plugin_la_SOURCES)
+nodist_libwl_shell_plugin_la_SOURCES = \
+	video_output/wayland/server-decoration-client-protocol.h \
+	video_output/wayland/server-decoration-protocol.c
+libwl_shell_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
+	-I$(builddir)/video_output/wayland
+libwl_shell_plugin_la_CFLAGS = $(libxdg_shell_plugin_la_CFLAGS)
+libwl_shell_plugin_la_LIBADD = $(libxdg_shell_plugin_la_LIBADD)
 
-libxdg_shell_plugin_la_SOURCES = video_output/wayland/xdg-shell.c
+libxdg_shell_plugin_la_SOURCES = \
+	video_output/wayland/output.h video_output/wayland/output.c \
+	video_output/wayland/input.h video_output/wayland/input.c \
+	video_output/xcb/vlc_xkb.h video_output/xcb/xkb.c \
+	video_output/wayland/xdg-shell.c
 nodist_libxdg_shell_plugin_la_SOURCES = \
 	video_output/wayland/xdg-shell-client-protocol.h \
 	video_output/wayland/xdg-shell-protocol.c \
 	video_output/wayland/server-decoration-client-protocol.h \
 	video_output/wayland/server-decoration-protocol.c
-libxdg_shell_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
+libxdg_shell_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) -DXDG_SHELL \
 	-I$(builddir)/video_output/wayland
-libxdg_shell_plugin_la_CFLAGS = $(WAYLAND_CLIENT_CFLAGS)
-libxdg_shell_plugin_la_LIBADD = $(WAYLAND_CLIENT_LIBS) $(LIBPTHREAD)
+libxdg_shell_plugin_la_CFLAGS = \
+	$(WAYLAND_CLIENT_CFLAGS) $(WAYLAND_CURSOR_CFLAGS) \
+	$(XKBCOMMON_CFLAGS)
+libxdg_shell_plugin_la_LIBADD = \
+	$(WAYLAND_CLIENT_LIBS) $(WAYLAND_CURSOR_LIBS) \
+	$(XKBCOMMON_LIBS)
+if HAVE_XKBCOMMON
+libwl_shell_plugin_la_CPPFLAGS += -DHAVE_XKBCOMMON
+libxdg_shell_plugin_la_CPPFLAGS += -DHAVE_XKBCOMMON
+endif
 
 video_output/wayland/xdg-shell-client-protocol.h: \
-		$(WAYLAND_PROTOCOLS)/unstable/xdg-shell/xdg-shell-unstable-v5.xml
+		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml \
+		video_output/Makefile.am
 	$(AM_V_GEN)$(WAYLAND_SCANNER) client-header $< $@
 
 video_output/wayland/xdg-shell-protocol.c: \
-		$(WAYLAND_PROTOCOLS)/unstable/xdg-shell/xdg-shell-unstable-v5.xml
-	$(AM_V_GEN)$(WAYLAND_SCANNER) code $< $@
+		$(WAYLAND_PROTOCOLS)/stable/xdg-shell/xdg-shell.xml \
+		video_output/Makefile.am
+	$(AM_V_GEN)$(WAYLAND_SCANNER) private-code $< $@
 
 video_output/wayland/server-decoration-client-protocol.h: \
 		video_output/wayland/server-decoration.xml
@@ -242,10 +261,8 @@ vout_LTLIBRARIES += libwl_shm_plugin.la
 vout_LTLIBRARIES += libwl_shell_plugin.la
 BUILT_SOURCES += $(nodist_libxdg_shell_plugin_la_SOURCES)
 vout_LTLIBRARIES += libxdg_shell_plugin.la
-if HAVE_WAYLAND_EGL
 if HAVE_EGL
 vout_LTLIBRARIES += libegl_wl_plugin.la
-endif
 endif
 endif
 
@@ -275,7 +292,9 @@ if !HAVE_WINSTORE
 libdirect3d11_plugin_la_SOURCES += video_output/win32/events.c \
  video_output/win32/events.h \
  video_output/win32/sensors.cpp \
- video_output/win32/win32touch.c video_output/win32/win32touch.h
+ video_output/win32/win32touch.c video_output/win32/win32touch.h \
+ video_output/win32/d3d11_quad.c video_output/win32/d3d11_quad.h \
+ video_output/win32/d3d11_shaders.c video_output/win32/d3d11_shaders.h
 libdirect3d11_plugin_la_LIBADD += -lgdi32
 else
 libdirect3d11_plugin_la_LIBADD += -ld3d11
@@ -292,7 +311,7 @@ libdirectdraw_plugin_la_SOURCES = video_output/win32/directdraw.c \
 	video_output/win32/win32touch.c video_output/win32/win32touch.h
 libdirectdraw_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
 	-DMODULE_NAME_IS_directdraw
-libdirectdraw_plugin_la_LIBADD = libchroma_copy.la -luser32 -lgdi32 $(LIBCOM) -luuid
+libdirectdraw_plugin_la_LIBADD = libchroma_copy.la -luser32 -ldxguid -lgdi32 $(LIBCOM) -luuid
 libdirectdraw_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
 if HAVE_WIN32_DESKTOP
 vout_LTLIBRARIES += $(LTLIBdirectdraw)
@@ -313,8 +332,8 @@ libglwin32_plugin_la_CPPFLAGS = $(AM_CPPFLAGS) \
 libglwin32_plugin_la_LIBADD = libchroma_copy.la -lopengl32 -lgdi32 $(LIBCOM) -luuid $(OPENGL_COMMONLIBS)
 libwgl_plugin_la_LIBADD = -lopengl32 -lgdi32 $(OPENGL_COMMONLIBS)
 
-libglwin32_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCLFAGS) -DHAVE_GL_CORE_SYMBOLS
-libwgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCLFAGS)
+libglwin32_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCFLAGS) -DHAVE_GL_CORE_SYMBOLS
+libwgl_plugin_la_CFLAGS = $(AM_CFLAGS) $(OPENGL_COMMONCFLAGS)
 
 libglwin32_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
 libwgl_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
@@ -403,6 +422,16 @@ EXTRA_LTLIBRARIES += libfb_plugin.la
 vout_LTLIBRARIES += $(LTLIBfb)
 
 
+### Kernel Mode Setting ###
+
+libkms_plugin_la_SOURCES = video_output/kms.c
+libkms_plugin_la_CFLAGS = $(AM_CFLAGS) $(KMS_CFLAGS)
+libkms_plugin_la_LIBADD = $(KMS_LIBS)
+libkms_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(voutdir)'
+EXTRA_LTLIBRARIES += libkms_plugin.la
+vout_LTLIBRARIES += $(LTLIBkms)
+
+
 ### Coloured ASCII art ###
 libcaca_plugin_la_SOURCES = video_output/caca.c
 libcaca_plugin_la_CFLAGS = $(AM_CFLAGS) $(CACA_CFLAGS)
@@ -423,10 +452,14 @@ libflaschen_plugin_la_LIBADD = $(SOCKET_LIBS)
 
 libvdummy_plugin_la_SOURCES = video_output/vdummy.c
 libvmem_plugin_la_SOURCES = video_output/vmem.c
+libwdummy_plugin_la_SOURCES = video_output/wdummy.c
 libyuv_plugin_la_SOURCES = video_output/yuv.c
+libvgl_plugin_la_SOURCES = video_output/vgl.c
 
 vout_LTLIBRARIES += \
 	libflaschen_plugin.la \
 	libvdummy_plugin.la \
 	libvmem_plugin.la \
+	libwdummy_plugin.la \
+	libvgl_plugin.la \
 	libyuv_plugin.la

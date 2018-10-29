@@ -70,7 +70,7 @@ typedef struct audioscrobbler_song_t
     int         i_l;                /**< track length     */
     char        *psz_m;             /**< musicbrainz id   */
     time_t      date;               /**< date since epoch */
-    mtime_t     i_start;            /**< playing start    */
+    vlc_tick_t  i_start;            /**< playing start    */
 } audioscrobbler_song_t;
 
 struct intf_sys_t
@@ -94,8 +94,8 @@ struct intf_sys_t
     /* data about song currently playing */
     audioscrobbler_song_t   p_current_song;     /**< song being played      */
 
-    mtime_t                 time_pause;         /**< time when vlc paused   */
-    mtime_t                 time_total_pauses;  /**< total time in pause    */
+    vlc_tick_t              time_pause;         /**< time when vlc paused   */
+    vlc_tick_t              time_total_pauses;  /**< total time in pause    */
 
     bool                    b_submit_nowp;      /**< do we have to submit ? */
 
@@ -132,8 +132,7 @@ vlc_module_begin ()
     set_description(N_("Submission of played songs to last.fm"))
     add_string("lastfm-username", "",
                 USERNAME_TEXT, USERNAME_LONGTEXT, false)
-    add_password("lastfm-password", "",
-                PASSWORD_TEXT, PASSWORD_LONGTEXT, false)
+    add_password("lastfm-password", "", PASSWORD_TEXT, PASSWORD_LONGTEXT)
     add_string("scrobbler-url", "post.audioscrobbler.com",
                 URL_TEXT, URL_LONGTEXT, false)
     set_capability("interface", 0)
@@ -199,7 +198,7 @@ static void ReadMetaData(intf_thread_t *p_this, input_thread_t *p_input)
     ALLOC_ITEM_META(p_sys->p_current_song.psz_m, TrackID);
     ALLOC_ITEM_META(p_sys->p_current_song.psz_n, TrackNum);
 
-    p_sys->p_current_song.i_l = input_item_GetDuration(p_item) / 1000000;
+    p_sys->p_current_song.i_l = SEC_FROM_VLC_TICK(input_item_GetDuration(p_item));
 
 #undef ALLOC_ITEM_META
 
@@ -216,7 +215,7 @@ end:
  *****************************************************************************/
 static void AddToQueue (intf_thread_t *p_this)
 {
-    mtime_t                     played_time;
+    int64_t                     played_time;
     intf_sys_t                  *p_sys = p_this->p_sys;
 
     vlc_mutex_lock(&p_sys->lock);
@@ -226,9 +225,8 @@ static void AddToQueue (intf_thread_t *p_this)
         goto end;
 
     /* wait for the user to listen enough before submitting */
-    played_time = mdate() - p_sys->p_current_song.i_start -
-                            p_sys->time_total_pauses;
-    played_time /= 1000000; /* µs → s */
+    played_time = SEC_FROM_VLC_TICK(vlc_tick_now() - p_sys->p_current_song.i_start -
+                                    p_sys->time_total_pauses);
 
     /*HACK: it seam that the preparsing sometime fail,
             so use the playing time as the song length */
@@ -328,10 +326,10 @@ static int PlayingChange(vlc_object_t *p_this, const char *psz_var,
     if (state >= END_S)
         AddToQueue(p_intf);
     else if (state == PAUSE_S)
-        p_sys->time_pause = mdate();
+        p_sys->time_pause = vlc_tick_now();
     else if (p_sys->time_pause > 0 && state == PLAYING_S)
     {
-        p_sys->time_total_pauses += (mdate() - p_sys->time_pause);
+        p_sys->time_total_pauses += (vlc_tick_now() - p_sys->time_pause);
         p_sys->time_pause = 0;
     }
 
@@ -375,7 +373,7 @@ static int ItemChange(vlc_object_t *p_this, const char *psz_var,
 
     p_sys->time_total_pauses = 0;
     time(&p_sys->p_current_song.date);        /* to be sent to last.fm */
-    p_sys->p_current_song.i_start = mdate();    /* only used locally */
+    p_sys->p_current_song.i_start = vlc_tick_now();    /* only used locally */
 
     p_sys->p_input = vlc_object_hold(p_input);
     var_AddCallback(p_input, "intf-event", PlayingChange, p_intf);
@@ -603,7 +601,6 @@ static int Handshake(intf_thread_t *p_this)
         goto proto;
 
     /* We need to read the nowplaying url */
-    p_buffer_pos += 7; /* we skip "http://" */
     psz_url = strndup(p_buffer_pos, strcspn(p_buffer_pos, "\n"));
     if (!psz_url)
         goto oom;
@@ -616,13 +613,13 @@ static int Handshake(intf_thread_t *p_this)
         vlc_UrlClean(&p_sys->p_nowp_url);
         goto proto;
     }
+    p_buffer_pos += strcspn(p_buffer_pos, "\n");
 
     p_buffer_pos = strstr(p_buffer_pos, "http://");
     if (!p_buffer_pos || strlen(p_buffer_pos) == 7)
         goto proto;
 
     /* We need to read the submission url */
-    p_buffer_pos += 7; /* we skip "http://" */
     psz_url = strndup(p_buffer_pos, strcspn(p_buffer_pos, "\n"));
     if (!psz_url)
         goto oom;
@@ -648,7 +645,7 @@ proto:
     return VLC_EGENERIC;
 }
 
-static void HandleInterval(mtime_t *next, unsigned int *i_interval)
+static void HandleInterval(vlc_tick_t *next, unsigned int *i_interval)
 {
     if (*i_interval == 0)
     {
@@ -662,7 +659,7 @@ static void HandleInterval(mtime_t *next, unsigned int *i_interval)
         if (*i_interval > 120)
             *i_interval = 120;
     }
-    *next = mdate() + (*i_interval * 1000000 * 60);
+    *next = vlc_tick_now() + (*i_interval * VLC_TICK_FROM_SEC(60));
 }
 
 /*****************************************************************************
@@ -677,7 +674,7 @@ static void *Run(void *data)
     bool                    b_nowp_submission_ongoing = false;
 
     /* data about audioscrobbler session */
-    mtime_t                 next_exchange = 0; /**< when can we send data  */
+    vlc_tick_t              next_exchange = VLC_TICK_INVALID; /**< when can we send data  */
     unsigned int            i_interval = 0;     /**< waiting interval (secs)*/
 
     intf_sys_t *p_sys = p_intf->p_sys;
@@ -686,7 +683,8 @@ static void *Run(void *data)
     for (;;)
     {
         vlc_restorecancel(canc);
-        mwait(next_exchange);
+        if (next_exchange != VLC_TICK_INVALID)
+            vlc_tick_wait(next_exchange);
 
         vlc_mutex_lock(&p_sys->lock);
         mutex_cleanup_push(&p_sys->lock);
@@ -721,7 +719,7 @@ static void *Run(void *data)
                     msg_Dbg(p_intf, "Handshake successful :)");
                     b_handshaked = true;
                     i_interval = 0;
-                    next_exchange = 0;
+                    next_exchange = VLC_TICK_INVALID;
                     break;
 
                 case VLC_AUDIOSCROBBLER_EFATAL:
@@ -904,7 +902,7 @@ static void *Run(void *data)
             }
 
             i_interval = 0;
-            next_exchange = 0;
+            next_exchange = VLC_TICK_INVALID;
             msg_Dbg(p_intf, "Submission successful!");
         }
         else

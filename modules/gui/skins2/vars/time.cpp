@@ -77,8 +77,8 @@ std::string StreamTime::getAsStringCurrTime( bool bShortFormat ) const
     if( !havePosition() )
         return "-:--:--";
 
-    mtime_t time = var_GetInteger( getIntf()->p_sys->p_input, "time" );
-    return formatTime( time / CLOCK_FREQ, bShortFormat );
+    vlc_tick_t time = var_GetInteger( getIntf()->p_sys->p_input, "time" );
+    return formatTime( SEC_FROM_VLC_TICK(time), bShortFormat );
 }
 
 
@@ -87,10 +87,10 @@ std::string StreamTime::getAsStringTimeLeft( bool bShortFormat ) const
     if( !havePosition() )
         return "-:--:--";
 
-    mtime_t time = var_GetInteger( getIntf()->p_sys->p_input, "time" ),
+    vlc_tick_t time = var_GetInteger( getIntf()->p_sys->p_input, "time" ),
         duration = var_GetInteger( getIntf()->p_sys->p_input, "length" );
 
-    return formatTime( (duration - time) / CLOCK_FREQ, bShortFormat );
+    return formatTime( SEC_FROM_VLC_TICK(duration - time), bShortFormat );
 }
 
 
@@ -99,6 +99,6 @@ std::string StreamTime::getAsStringDuration( bool bShortFormat ) const
     if( !havePosition() )
         return "-:--:--";
 
-    mtime_t time = var_GetInteger( getIntf()->p_sys->p_input, "length" );
-    return formatTime( time / CLOCK_FREQ, bShortFormat );
+    vlc_tick_t time = var_GetInteger( getIntf()->p_sys->p_input, "length" );
+    return formatTime( SEC_FROM_VLC_TICK(time), bShortFormat );
 }

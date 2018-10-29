@@ -81,7 +81,7 @@ struct vout_display_sys_t {
     picture_pool_t *pool;
 };
 static picture_pool_t *Pool(vout_display_t *, unsigned count);
-static void            Display(vout_display_t *, picture_t *, subpicture_t *);
+static void            Display(vout_display_t *, picture_t *);
 static int             Control(vout_display_t *, int, va_list);
 
 /*****************************************************************************
@@ -92,7 +92,7 @@ static int Open(vlc_object_t *object)
     vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys;
     int fd;
-    unsigned port = 1337;
+    const unsigned port = 1337;
 
     vd->sys = sys = calloc(1, sizeof(*sys));
     if (!sys)
@@ -147,8 +147,6 @@ static int Open(vlc_object_t *object)
     vd->display = Display;
     vd->control = Control;
 
-    vout_display_DeleteWindow(vd, NULL);
-
     return VLC_SUCCESS;
 }
 
@@ -172,7 +170,7 @@ static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
     return sys->pool;
 }
 
-static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
+static void Display(vout_display_t *vd, picture_t *picture)
 {
 #ifdef IOV_MAX
     const long iovmax = IOV_MAX;
@@ -181,7 +179,6 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
 #endif
     vout_display_sys_t *sys = vd->sys;
     int result;
-    VLC_UNUSED(subpicture);
 
     char buffer[64];
     int header_len = snprintf(buffer, sizeof(buffer), "P6\n%d %d\n255\n",
@@ -221,8 +218,6 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
     else if (result < (int)(header_len + vd->fmt.i_width * vd->fmt.i_height * 3))
         msg_Err(vd, "sendmsg only sent %d bytes in vout display flaschen", result);
         /* we might want to drop some frames? */
-
-    picture_Release(picture);
 }
 
 /**

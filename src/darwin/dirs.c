@@ -28,6 +28,7 @@
 #endif
 
 #include <vlc_common.h>
+#include <vlc_charset.h>
 #include "../libvlc.h"
 
 #include <libgen.h>
@@ -92,7 +93,7 @@ char *config_GetLibDir (void)
     abort ();
 }
 
-char *config_GetDataDir (void)
+static char *config_GetDataDir(void)
 {
     const char *path = getenv ("VLC_DATA_PATH");
     if (path)
@@ -106,6 +107,37 @@ char *config_GetDataDir (void)
 
     free (vlcpath);
     return datadir;
+}
+
+char *config_GetSysPath(vlc_sysdir_t type, const char *filename)
+{
+    char *dir = NULL;
+
+    switch (type)
+    {
+        case VLC_PKG_DATA_DIR:
+            dir = config_GetDataDir();
+            break;
+        case VLC_PKG_LIB_DIR:
+        case VLC_PKG_LIBEXEC_DIR:
+            dir = config_GetLibDir();
+            break;
+        case VLC_SYSDATA_DIR:
+            break;
+        case VLC_LOCALE_DIR:
+            dir = config_GetSysPath(VLC_PKG_DATA_DIR, "locale");
+            break;
+        default:
+            vlc_assert_unreachable();
+    }
+
+    if (filename == NULL || unlikely(dir == NULL))
+        return dir;
+
+    char *path;
+    asprintf(&path, "%s/%s", dir, filename);
+    free(dir);
+    return path;
 }
 
 static char *config_GetHomeDir (void)
@@ -126,7 +158,7 @@ static char *getAppDependentDir(vlc_userdir_t type)
             psz_path = "%s/Library/Preferences/%s";
             break;
         case VLC_TEMPLATES_DIR:
-        case VLC_DATA_DIR:
+        case VLC_USERDATA_DIR:
             psz_path = "%s/Library/Application Support/%s";
             break;
         case VLC_CACHE_DIR:
@@ -144,16 +176,8 @@ static char *getAppDependentDir(vlc_userdir_t type)
     CFBundleRef mainBundle = CFBundleGetMainBundle();
     if (mainBundle) {
         CFStringRef identifierAsNS = CFBundleGetIdentifier(mainBundle);
-        if (identifierAsNS) {
-            CFIndex len = CFStringGetLength(identifierAsNS);
-            CFIndex size = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8);
-            char *identifier = calloc(len + 1, sizeof(char));
-            if (identifier != NULL) {
-                Boolean ret = CFStringGetCString(identifierAsNS, identifier, size, kCFStringEncodingUTF8);
-                if (ret)
-                    name = identifier;
-            }
-        }
+        if (identifierAsNS)
+            name = FromCFString(identifierAsNS, kCFStringEncodingUTF8);
     }
 
     char *psz_parent = config_GetHomeDir ();
@@ -172,7 +196,7 @@ char *config_GetUserDir (vlc_userdir_t type)
     switch (type) {
         case VLC_CONFIG_DIR:
         case VLC_TEMPLATES_DIR:
-        case VLC_DATA_DIR:
+        case VLC_USERDATA_DIR:
         case VLC_CACHE_DIR:
             return getAppDependentDir(type);
 

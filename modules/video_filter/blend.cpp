@@ -60,6 +60,8 @@ void merge(T *dst, unsigned src, unsigned f)
     *dst = div255((255 - f) * (*dst) + src * f);
 }
 
+namespace {
+
 struct CPixel {
     unsigned i, j, k;
     unsigned a;
@@ -519,6 +521,8 @@ private:
     G g;
 };
 
+} // namespace
+
 template <class TDst, class TSrc, class TConvert>
 void Blend(const CPicture &dst_data, const CPicture &src_data,
            unsigned width, unsigned height, int alpha)
@@ -550,6 +554,8 @@ void Blend(const CPicture &dst_data, const CPicture &src_data,
 
 typedef void (*blend_function_t)(const CPicture &dst_data, const CPicture &src_data,
                                  unsigned width, unsigned height, int alpha);
+
+namespace {
 
 static const struct {
     vlc_fourcc_t     dst;
@@ -597,9 +603,11 @@ static const struct {
 #ifdef WORDS_BIGENDIAN
     YUV(VLC_CODEC_I422_9B,  CPictureI422_16,  convert8To9Bits),
     YUV(VLC_CODEC_I422_10B, CPictureI422_16,  convert8To10Bits),
+    YUV(VLC_CODEC_I422_16B, CPictureI422_16,  convert8To16Bits),
 #else
     YUV(VLC_CODEC_I422_9L,  CPictureI422_16,  convert8To9Bits),
     YUV(VLC_CODEC_I422_10L, CPictureI422_16,  convert8To10Bits),
+    YUV(VLC_CODEC_I422_16L, CPictureI422_16,  convert8To16Bits),
 #endif
 
     YUV(VLC_CODEC_J444,     CPictureI444_8,   convertNone),
@@ -630,6 +638,8 @@ struct filter_sys_t {
     blend_function_t blend;
 };
 
+} // namespace
+
 /**
  * It blends 2 picture together.
  */
@@ -637,7 +647,7 @@ static void Blend(filter_t *filter,
                   picture_t *dst, const picture_t *src,
                   int x_offset, int y_offset, int alpha)
 {
-    filter_sys_t *sys = filter->p_sys;
+    filter_sys_t *sys = reinterpret_cast<filter_sys_t *>( filter->p_sys );
 
     if( x_offset < 0 || y_offset < 0 )
     {
@@ -691,6 +701,7 @@ static int Open(vlc_object_t *object)
 static void Close(vlc_object_t *object)
 {
     filter_t *filter = (filter_t *)object;
-    delete filter->p_sys;
+    filter_sys_t *p_sys = reinterpret_cast<filter_sys_t *>( filter->p_sys );
+    delete p_sys;
 }
 

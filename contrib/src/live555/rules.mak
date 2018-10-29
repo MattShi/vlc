@@ -19,9 +19,12 @@ $(TARBALLS)/$(LIVE555_FILE):
 
 .sum-live555: $(LIVE555_FILE)
 
+LIVE_EXTRA_CFLAGS := $(EXTRA_CFLAGS) -fexceptions $(CFLAGS)
+
 LIVE_TARGET = $(error live555 target not defined!)
 ifdef HAVE_LINUX
 LIVE_TARGET := linux
+LIVE_EXTRA_CFLAGS += -DXLOCALE_NOT_USED
 endif
 ifdef HAVE_WIN32
 LIVE_TARGET := mingw
@@ -40,8 +43,6 @@ else
 LIVE_TARGET := solaris-32bit
 endif
 endif
-
-LIVE_EXTRA_CFLAGS := $(EXTRA_CFLAGS) -fexceptions $(CFLAGS)
 
 live555: $(LIVE555_FILE) .sum-live555
 	rm -Rf live && $(UNPACK)
@@ -76,6 +77,14 @@ endif
 	$(APPLY) $(SRC)/live555/add-pkgconfig-file.patch
 	# Expose Server:
 	$(APPLY) $(SRC)/live555/expose_server_string.patch
+	# Fix creating static libs on mingw
+	$(APPLY) $(SRC)/live555/mingw-static-libs.patch
+ifdef HAVE_ANDROID
+	# Fix in_addr.s_addr field access
+	$(APPLY) $(SRC)/live555/in_addr-s_addr-field.patch
+	# Don't use unavailable off64_t functions
+	$(APPLY) $(SRC)/live555/file-offset-bits-64.patch
+endif
 
 	mv live.$(LIVE555_VERSION) $@ && touch $@
 

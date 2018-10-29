@@ -34,7 +34,7 @@ namespace adaptive
 {
     namespace http
     {
-        class Socket;
+        class Transport;
         class AuthStorage;
 
         class AbstractConnection
@@ -46,7 +46,8 @@ namespace adaptive
                 virtual bool    prepare     (const ConnectionParams &);
                 virtual bool    canReuse     (const ConnectionParams &) const = 0;
 
-                virtual int     request     (const std::string& path, const BytesRange & = BytesRange()) = 0;
+                virtual enum RequestStatus
+                                request     (const std::string& path, const BytesRange & = BytesRange()) = 0;
                 virtual ssize_t read        (void *p_buffer, size_t len) = 0;
 
                 virtual size_t  getContentLength() const;
@@ -66,12 +67,13 @@ namespace adaptive
         class HTTPConnection : public AbstractConnection
         {
             public:
-                HTTPConnection(vlc_object_t *, AuthStorage *,  Socket *,
+                HTTPConnection(vlc_object_t *, AuthStorage *,  Transport *,
                                const ConnectionParams &, bool = false);
                 virtual ~HTTPConnection();
 
                 virtual bool    canReuse     (const ConnectionParams &) const;
-                virtual int     request     (const std::string& path, const BytesRange & = BytesRange());
+                virtual enum RequestStatus
+                                request     (const std::string& path, const BytesRange & = BytesRange());
                 virtual ssize_t read        (void *p_buffer, size_t len);
 
                 void setUsed( bool );
@@ -91,7 +93,7 @@ namespace adaptive
                 virtual std::string buildRequestHeader(const std::string &path) const;
 
                 ssize_t         readChunk   (void *p_buffer, size_t len);
-                int parseReply();
+                enum RequestStatus parseReply();
                 std::string readLine();
                 char * psz_useragent;
 
@@ -107,7 +109,7 @@ namespace adaptive
                 static const int    retryCount = 5;
 
             private:
-                Socket *socket;
+                Transport *transport;
        };
 
        class StreamUrlConnection : public AbstractConnection
@@ -118,7 +120,8 @@ namespace adaptive
 
                 virtual bool    canReuse     (const ConnectionParams &) const;
 
-                virtual int     request     (const std::string& path, const BytesRange & = BytesRange());
+                virtual enum RequestStatus
+                                request     (const std::string& path, const BytesRange & = BytesRange());
                 virtual ssize_t read        (void *p_buffer, size_t len);
 
                 virtual void    setUsed( bool );
@@ -128,21 +131,41 @@ namespace adaptive
                 stream_t *p_streamurl;
        };
 
-       class ConnectionFactory
+       class AbstractConnectionFactory
+       {
+           public:
+               AbstractConnectionFactory() {}
+               virtual ~AbstractConnectionFactory() {}
+               virtual AbstractConnection * createConnection(vlc_object_t *, const ConnectionParams &) = 0;
+       };
+
+       class NativeConnectionFactory : public AbstractConnectionFactory
+       {
+           public:
+               NativeConnectionFactory( AuthStorage * );
+               virtual ~NativeConnectionFactory();
+               virtual AbstractConnection * createConnection(vlc_object_t *, const ConnectionParams &);
+           private:
+               AuthStorage *authStorage;
+       };
+
+       class StreamUrlConnectionFactory : public AbstractConnectionFactory
+       {
+           public:
+               StreamUrlConnectionFactory();
+               virtual ~StreamUrlConnectionFactory() {}
+               virtual AbstractConnection * createConnection(vlc_object_t *, const ConnectionParams &);
+       };
+
+       class ConnectionFactory : public AbstractConnectionFactory
        {
            public:
                ConnectionFactory( AuthStorage * );
                virtual ~ConnectionFactory();
                virtual AbstractConnection * createConnection(vlc_object_t *, const ConnectionParams &);
            private:
-               AuthStorage *authStorage;
-       };
-
-       class StreamUrlConnectionFactory : public ConnectionFactory
-       {
-           public:
-               StreamUrlConnectionFactory();
-               virtual AbstractConnection * createConnection(vlc_object_t *, const ConnectionParams &);
+               NativeConnectionFactory *native;
+               StreamUrlConnectionFactory *streamurl;
        };
     }
 }

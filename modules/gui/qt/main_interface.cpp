@@ -32,6 +32,7 @@
 #include "main_interface.hpp"
 #include "input_manager.hpp"                    // Creation
 #include "actions_manager.hpp"                  // killInstance
+#include "managers/renderer_manager.hpp"
 
 #include "util/customwidgets.hpp"               // qtEventToVLCKey, QVLCStackedWidget
 #include "util/qt_dirs.hpp"                     // toNativeSeparators
@@ -73,7 +74,7 @@
 #include <QTimer>
 
 #include <vlc_actions.h>                    /* Wheel event */
-#include <vlc_vout_display.h>               /* vout_thread_t and VOUT_ events */
+#include <vlc_vout_window.h>                /* VOUT_ events */
 
 // #define DEBUG_INTF
 
@@ -222,8 +223,6 @@ MainInterface::MainInterface( intf_thread_t *_p_intf ) : QVLCMW( _p_intf )
 
         CONNECT( this, askVideoSetFullScreen( bool ),
                  this, setVideoFullScreen( bool ) );
-        CONNECT( this, askHideMouse( bool ),
-                 this, setHideMouse( bool ) );
     }
 
     CONNECT( THEDP, toolBarConfUpdated(), this, toolBarConfUpdated() );
@@ -242,12 +241,12 @@ MainInterface::MainInterface( intf_thread_t *_p_intf ) : QVLCMW( _p_intf )
     /************
      * Callbacks
      ************/
-    var_AddCallback( p_intf->obj.libvlc, "intf-toggle-fscontrol", IntfShowCB, p_intf );
-    var_AddCallback( p_intf->obj.libvlc, "intf-boss", IntfBossCB, p_intf );
-    var_AddCallback( p_intf->obj.libvlc, "intf-show", IntfRaiseMainCB, p_intf );
+    var_AddCallback( pl_Get(p_intf), "intf-toggle-fscontrol", IntfShowCB, p_intf );
+    var_AddCallback( pl_Get(p_intf), "intf-boss", IntfBossCB, p_intf );
+    var_AddCallback( pl_Get(p_intf), "intf-show", IntfRaiseMainCB, p_intf );
 
     /* Register callback for the intf-popupmenu variable */
-    var_AddCallback( p_intf->obj.libvlc, "intf-popupmenu", PopupMenuCB, p_intf );
+    var_AddCallback( pl_Get(p_intf), "intf-popupmenu", PopupMenuCB, p_intf );
 
 
     /* Final Sizing, restoration and placement of the interface */
@@ -282,6 +281,8 @@ MainInterface::~MainInterface()
     /* Delete the FSC controller */
     delete fullscreenControls;
 
+    RendererManager::killInstance();
+
     /* Save states */
 
     settings->beginGroup("MainWindow");
@@ -303,10 +304,10 @@ MainInterface::~MainInterface()
     QVLCTools::saveWidgetPosition(settings, this);
 
     /* Unregister callbacks */
-    var_DelCallback( p_intf->obj.libvlc, "intf-boss", IntfBossCB, p_intf );
-    var_DelCallback( p_intf->obj.libvlc, "intf-show", IntfRaiseMainCB, p_intf );
-    var_DelCallback( p_intf->obj.libvlc, "intf-toggle-fscontrol", IntfShowCB, p_intf );
-    var_DelCallback( p_intf->obj.libvlc, "intf-popupmenu", PopupMenuCB, p_intf );
+    var_DelCallback( pl_Get(p_intf), "intf-boss", IntfBossCB, p_intf );
+    var_DelCallback( pl_Get(p_intf), "intf-show", IntfRaiseMainCB, p_intf );
+    var_DelCallback( pl_Get(p_intf), "intf-toggle-fscontrol", IntfShowCB, p_intf );
+    var_DelCallback( pl_Get(p_intf), "intf-popupmenu", PopupMenuCB, p_intf );
 
     p_intf->p_sys->p_mi = NULL;
 }
@@ -390,13 +391,13 @@ void MainInterface::createResumePanel( QWidget *w )
 
     CONNECT( resumeTimer, timeout(), this, hideResumePanel() );
     CONNECT( cancel, clicked(), this, hideResumePanel() );
-    CONNECT( THEMIM->getIM(), resumePlayback(int64_t), this, showResumePanel(int64_t) );
+    CONNECT( THEMIM->getIM(), resumePlayback(vlc_tick_t), this, showResumePanel(vlc_tick_t) );
     BUTTONACT( ok, resumePlayback() );
 
     w->layout()->addWidget( resumePanel );
 }
 
-void MainInterface::showResumePanel( int64_t _time ) {
+void MainInterface::showResumePanel( vlc_tick_t _time ) {
     int setting = var_InheritInteger( p_intf, "qt-continue" );
 
     if( setting == 0 )
@@ -590,9 +591,6 @@ inline void MainInterface::createStatusBar()
     CONNECT( THEMIM->getIM(), encryptionChanged( bool ),
              this, showCryptedLabel( bool ) );
 
-    CONNECT( THEMIM->getIM(), seekRequested( float ),
-             timeLabel, setDisplayPosition( float ) );
-
     /* This shouldn't be necessary, but for somehow reason, the statusBarr
        starts at height of 20px and when a text is shown it needs more space.
        But, as the QMainWindow policy doesn't allow statusBar to change QMW's
@@ -626,10 +624,10 @@ void MainInterface::debug()
 }
 
 inline void MainInterface::showVideo() { showTab( videoWidget ); }
-inline void MainInterface::restoreStackOldWidget()
-            { showTab( stackCentralOldWidget ); }
+inline void MainInterface::restoreStackOldWidget( bool video_closing )
+            { showTab( stackCentralOldWidget, video_closing ); }
 
-inline void MainInterface::showTab( QWidget *widget )
+inline void MainInterface::showTab( QWidget *widget, bool video_closing )
 {
     if ( !widget ) widget = bgWidget; /* trying to restore a null oldwidget */
 #ifdef DEBUG_INTF
@@ -649,10 +647,11 @@ inline void MainInterface::showTab( QWidget *widget )
         widget = bgWidget;
 
     stackCentralOldWidget = stackCentralW->currentWidget();
-    stackWidgetsSizes[stackCentralOldWidget] = stackCentralW->size();
+    if( !isFullScreen() )
+        stackWidgetsSizes[stackCentralOldWidget] = stackCentralW->size();
 
     /* If we are playing video, embedded */
-    if( videoWidget && THEMIM->getIM()->hasVideo() )
+    if( !video_closing && videoWidget && THEMIM->getIM()->hasVideo() )
     {
         /* Video -> Playlist */
         if( videoWidget == stackCentralOldWidget && widget == playlistWidget )
@@ -683,7 +682,11 @@ inline void MainInterface::showTab( QWidget *widget )
 
     stackCentralW->setCurrentWidget( widget );
     if( b_autoresize )
-        resizeStack( stackWidgetsSizes[widget].width(), stackWidgetsSizes[widget].height() );
+    {
+        QSize size = stackWidgetsSizes[widget];
+        if( size.isValid() )
+            resizeStack( size.width(), size.height() );
+    }
 
 #ifdef DEBUG_INTF
     msg_Dbg( p_intf, "Stack state changed to %s, index %i",
@@ -695,7 +698,7 @@ inline void MainInterface::showTab( QWidget *widget )
 #endif
 
     /* This part is done later, to account for the new pl size */
-    if( videoWidget && THEMIM->getIM()->hasVideo() &&
+    if( !video_closing && videoWidget && THEMIM->getIM()->hasVideo() &&
         videoWidget == stackCentralOldWidget && widget == playlistWidget )
     {
         playlistWidget->artContainer->addWidget( videoWidget );
@@ -789,7 +792,7 @@ void MainInterface::releaseVideoSlot( void )
     hideResumePanel();
 
     if( stackCentralW->currentWidget() == videoWidget )
-        restoreStackOldWidget();
+        restoreStackOldWidget( true );
     else if( playlistWidget &&
              playlistWidget->artContainer->currentWidget() == videoWidget )
     {
@@ -865,18 +868,11 @@ void MainInterface::setVideoFullScreen( bool fs )
     if( fs )
     {
         int numscreen = var_InheritInteger( p_intf, "qt-fullscreen-screennumber" );
-        /* if user hasn't defined screennumber, or screennumber that is bigger
-         * than current number of screens, take screennumber where current interface
-         * is
-         */
-        if( numscreen < 0 || numscreen >= QApplication::desktop()->screenCount() )
-            numscreen = QApplication::desktop()->screenNumber( p_intf->p_sys->p_mi );
 
-        if( fullscreenControls )
-            fullscreenControls->setTargetScreen( numscreen );
-
-        if ( numscreen >= 0 )
+        if ( numscreen >= 0 && numscreen < QApplication::desktop()->screenCount() )
         {
+            if( fullscreenControls )
+                fullscreenControls->setTargetScreen( numscreen );
 
             QRect screenres = QApplication::desktop()->screenGeometry( numscreen );
             lastWinScreen = windowHandle()->screen();
@@ -895,13 +891,13 @@ void MainInterface::setVideoFullScreen( bool fs )
                 msg_Dbg( p_intf, "Moving video to correct position");
                 move( QPoint( screenres.x(), screenres.y() ) );
             }
-
-            /* */
-            if( playlistWidget != NULL && playlistWidget->artContainer->currentWidget() == videoWidget )
-            {
-                showTab( videoWidget );
-            }
         }
+
+        if( playlistWidget != NULL && playlistWidget->artContainer->currentWidget() == videoWidget )
+            showTab( videoWidget );
+
+        /* we won't be able to get its windowed sized once in fullscreen, so update it now */
+        stackWidgetsSizes[stackCentralW->currentWidget()] = stackCentralW->size();
 
         /* */
         displayNormalView();
@@ -921,18 +917,22 @@ void MainInterface::setVideoFullScreen( bool fs )
         if( lastWinPosition.isNull() == false )
         {
             move( lastWinPosition );
-            resizeWindow( lastWinSize.width(), lastWinSize.height() );
             lastWinPosition = QPoint();
-            lastWinSize = QSize();
+            if( !pendingResize.isValid() )
+            {
+                resizeWindow( lastWinSize.width(), lastWinSize.height() );
+                lastWinSize = QSize();
+            }
+        }
+        if( pendingResize.isValid() )
+        {
+            /* apply resize requested while fullscreen was enabled */
+            resizeStack( pendingResize.width(), pendingResize.height() );
+            pendingResize = QSize(); // consume
         }
 
     }
     videoWidget->sync();
-}
-
-void MainInterface::setHideMouse( bool hide )
-{
-    videoWidget->setCursor( hide ? Qt::BlankCursor : Qt::ArrowCursor );
 }
 
 /* Slot to change the video always-on-top flag.
@@ -994,19 +994,11 @@ int MainInterface::controlVideo( int i_query, va_list args )
         return VLC_SUCCESS;
     }
     case VOUT_WINDOW_SET_FULLSCREEN:
-    {
-        bool b_fs = va_arg( args, int );
-
-        emit askVideoSetFullScreen( b_fs );
+        emit askVideoSetFullScreen( true );
         return VLC_SUCCESS;
-    }
-    case VOUT_WINDOW_HIDE_MOUSE:
-    {
-        bool b_hide = va_arg( args, int );
-
-        emit askHideMouse( b_hide );
+    case VOUT_WINDOW_UNSET_FULLSCREEN:
+        emit askVideoSetFullScreen( false );
         return VLC_SUCCESS;
-    }
     default:
         msg_Warn( p_intf, "unsupported control query" );
         return VLC_EGENERIC;
@@ -1349,9 +1341,8 @@ void MainInterface::resizeWindow(int w, int h)
          * By calling XMoveResizeWindow directly, Qt will not see our change
          * request until the ConfigureNotify event on success
          * and not at all if it is rejected. */
-        XMoveResizeWindow( QX11Info::display(), winId(),
-                          geometry().x() * dpr, geometry().y() * dpr,
-                          (unsigned int)size.width() * dpr, (unsigned int)size.height() * dpr);
+        XResizeWindow( QX11Info::display(), winId(),
+                       (unsigned int)size.width() * dpr, (unsigned int)size.height() * dpr);
         return;
     }
 #endif
@@ -1539,10 +1530,9 @@ void MainInterface::dropEvent(QDropEvent *event)
  * Event called if something is dropped onto a VLC window
  * \param event the event in question
  * \param b_play whether to play the file immediately
- * \param b_playlist true to add to playlist, false to add to media library
  * \return nothing
  */
-void MainInterface::dropEventPlay( QDropEvent *event, bool b_play, bool b_playlist )
+void MainInterface::dropEventPlay( QDropEvent *event, bool b_play )
 {
     if( event->possibleActions() & ( Qt::CopyAction | Qt::MoveAction | Qt::LinkAction ) )
        event->setDropAction( Qt::CopyAction );
@@ -1587,7 +1577,7 @@ void MainInterface::dropEventPlay( QDropEvent *event, bool b_play, bool b_playli
 #endif
             if( mrl.length() > 0 )
             {
-                Open::openMRL( p_intf, mrl, first, b_playlist );
+                Open::openMRL( p_intf, mrl, first );
                 first = false;
             }
         }
@@ -1600,7 +1590,7 @@ void MainInterface::dropEventPlay( QDropEvent *event, bool b_play, bool b_playli
         QUrl(mimeData->text()).isValid() )
     {
         QString mrl = toURI( mimeData->text() );
-        Open::openMRL( p_intf, mrl, first, b_playlist );
+        Open::openMRL( p_intf, mrl, first );
     }
     event->accept();
 }

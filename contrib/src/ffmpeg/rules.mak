@@ -5,20 +5,19 @@
 #USE_FFMPEG ?= 1
 
 ifndef USE_LIBAV
-FFMPEG_HASH=eaff5fcb7cde8d1614755269773d471d3a3d1bfc
-FFMPEG_SNAPURL := http://git.videolan.org/?p=ffmpeg.git;a=snapshot;h=$(FFMPEG_HASH);sf=tgz
+FFMPEG_HASH=d0e740b8fb30f02914594d00eb311a32442a63f8
 FFMPEG_GITURL := http://git.videolan.org/git/ffmpeg.git
 FFMPEG_LAVC_MIN := 57.37.100
 USE_FFMPEG := 1
 else
-FFMPEG_HASH=e171022c24c42b1e88a51bb3b4c27f13c87c85cb
-FFMPEG_SNAPURL := http://git.libav.org/?p=libav.git;a=snapshot;h=$(FFMPEG_HASH);sf=tgz
+FFMPEG_HASH=35ed7f93dbc72d733e454ae464b1324f38af62a0
 FFMPEG_GITURL := git://git.libav.org/libav.git
 FFMPEG_LAVC_MIN := 57.16.0
 endif
 
 FFMPEG_BASENAME := $(subst .,_,$(subst \,_,$(subst /,_,$(FFMPEG_HASH))))
 
+# bsf=vp9_superframe is needed to mux VP9 inside webm/mkv
 FFMPEGCONF = \
 	--cc="$(CC)" \
 	--pkg-config="$(PKG_CONFIG)" \
@@ -34,7 +33,8 @@ FFMPEGCONF = \
 	--disable-protocol=concat \
 	--disable-bsfs \
 	--disable-bzlib \
-	--disable-avresample
+	--disable-avresample \
+	--enable-bsf=vp9_superframe
 
 ifdef USE_FFMPEG
 FFMPEGCONF += \
@@ -45,7 +45,15 @@ FFMPEGCONF += \
 	--disable-linux-perf
 ifdef HAVE_DARWIN_OS
 FFMPEGCONF += \
-	--disable-videotoolbox
+	--disable-securetransport
+endif
+endif
+
+# Disable VDA on macOS with libav
+ifdef USE_LIBAV
+ifdef HAVE_DARWIN_OS
+FFMPEGCONF += \
+	--disable-vda
 endif
 endif
 
@@ -54,7 +62,7 @@ DEPS_ffmpeg = zlib gsm
 ifndef USE_LIBAV
 FFMPEGCONF += \
 	--enable-libopenjpeg
-DEPS_ffmpeg += openjpeg
+DEPS_ffmpeg += openjpeg $(DEPS_openjpeg)
 endif
 
 # Optional dependencies
@@ -209,6 +217,10 @@ ifeq ($(ARCH),x86_64)
 FFMPEGCONF += --cpu=core2
 endif
 FFMPEGCONF += --target-os=sunos --enable-pic
+endif
+
+ifdef HAVE_NACL
+FFMPEGCONF+=--disable-inline-asm --disable-asm --target-os=linux
 endif
 
 # Build

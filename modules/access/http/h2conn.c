@@ -563,7 +563,7 @@ static ssize_t vlc_https_recv(vlc_tls_t *tls, void *buf, size_t len)
     while (iov.iov_len > 0)
     {
         int canc = vlc_savecancel();
-        ssize_t val = tls->readv(tls, &iov, 1);
+        ssize_t val = tls->ops->readv(tls, &iov, 1);
 
         vlc_restorecancel(canc);
 
@@ -672,8 +672,10 @@ static void *vlc_h2_recv_thread(void *data)
     vlc_h2_parse_destroy(parser);
 fail:
     /* Terminate any remaining stream */
+    vlc_mutex_lock(&conn->lock);
     for (struct vlc_h2_stream *s = conn->streams; s != NULL; s = s->older)
         vlc_h2_stream_reset(s, VLC_H2_CANCEL);
+    vlc_mutex_unlock(&conn->lock);
     return NULL;
 }
 

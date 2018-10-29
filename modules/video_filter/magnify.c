@@ -69,19 +69,19 @@ static void DrawRectangle( uint8_t *, int i_pitch, int i_width, int i_height,
                            int x, int y, int i_w, int i_h );
 
 /* */
-struct filter_sys_t
+typedef struct
 {
     image_handler_t *p_image;
 
-    int64_t i_hide_timeout;
+    vlc_tick_t i_hide_timeout;
 
     int i_zoom; /* zoom level in percent */
     int i_x, i_y; /* top left corner coordinates in original image */
 
     bool b_visible; /* is "interface" visible ? */
 
-    int64_t i_last_activity;
-};
+    vlc_tick_t i_last_activity;
+} filter_sys_t;
 
 #define VIS_ZOOM 4
 #define ZOOM_FACTOR 8
@@ -126,8 +126,8 @@ static int Create( vlc_object_t *p_this )
     p_sys->i_y = 0;
     p_sys->i_zoom = 2*ZOOM_FACTOR;
     p_sys->b_visible = true;
-    p_sys->i_last_activity = mdate();
-    p_sys->i_hide_timeout = 1000 * var_InheritInteger( p_filter, "mouse-hide-timeout" );
+    p_sys->i_last_activity = vlc_tick_now();
+    p_sys->i_hide_timeout = VLC_TICK_FROM_MS( var_InheritInteger( p_filter, "mouse-hide-timeout" ) );
 
     /* */
     p_filter->pf_video_filter = Filter;
@@ -186,7 +186,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
             const int o_yp = o_y * p_outpic->p[i_plane].i_visible_lines / p_outpic->p[Y_PLANE].i_visible_lines;
             const int o_xp = o_x * p_outpic->p[i_plane].i_visible_pitch / p_outpic->p[Y_PLANE].i_visible_pitch;
 
-            p_pic->p[i_plane].p_pixels += o_yp * p_pic->p[i_plane].i_visible_pitch + o_xp;
+            p_pic->p[i_plane].p_pixels += o_yp * p_pic->p[i_plane].i_pitch + o_xp;
         }
 
         /* */
@@ -230,7 +230,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
         v_w = __MIN( fmt_out.i_visible_width  * ZOOM_FACTOR / o_zoom, fmt_out.i_visible_width - 1 );
         v_h = __MIN( fmt_out.i_visible_height * ZOOM_FACTOR / o_zoom, fmt_out.i_visible_height - 1 );
 
-        DrawRectangle( p_oyp->p_pixels, p_oyp->i_visible_pitch,
+        DrawRectangle( p_oyp->p_pixels, p_oyp->i_pitch,
                        p_oyp->i_visible_pitch, p_oyp->i_visible_lines,
                        o_x/VIS_ZOOM, o_y/VIS_ZOOM,
                        v_w, v_h );
@@ -245,7 +245,7 @@ static picture_t *Filter( filter_t *p_filter, picture_t *p_pic )
 
     /* print a small "VLC ZOOM" */
 
-    if( b_visible || p_sys->i_last_activity + p_sys->i_hide_timeout > mdate() )
+    if( b_visible || p_sys->i_last_activity + p_sys->i_hide_timeout > vlc_tick_now() )
         DrawZoomStatus( p_oyp->p_pixels, p_oyp->i_visible_pitch, p_oyp->i_pitch, p_oyp->i_lines,
                         1, v_h, b_visible );
 
@@ -410,7 +410,7 @@ static int Mouse( filter_t *p_filter, vlc_mouse_t *p_mouse, const vlc_mouse_t *p
     }
 
     if( vlc_mouse_HasMoved( p_old, p_new ) )
-        p_sys->i_last_activity = mdate();
+        p_sys->i_last_activity = vlc_tick_now();
 
     if( b_grab )
         return VLC_EGENERIC;

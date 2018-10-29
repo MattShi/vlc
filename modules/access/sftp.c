@@ -67,7 +67,7 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_INPUT_ACCESS )
     add_integer( "sftp-port", 22, PORT_TEXT, PORT_LONGTEXT, true )
     add_string( "sftp-user", NULL, USER_TEXT, USER_LONGTEXT, false )
-    add_password( "sftp-pwd", NULL, PASS_TEXT, PASS_LONGTEXT, false )
+    add_password("sftp-pwd", NULL, PASS_TEXT, PASS_LONGTEXT)
     add_shortcut( "sftp" )
     set_callbacks( Open, Close )
 vlc_module_end ()
@@ -82,7 +82,7 @@ static int      Control( stream_t *, int, va_list );
 
 static int DirRead( stream_t *, input_item_node_t * );
 
-struct access_sys_t
+typedef struct
 {
     int i_socket;
     LIBSSH2_SESSION* ssh_session;
@@ -90,7 +90,7 @@ struct access_sys_t
     LIBSSH2_SFTP_HANDLE* file;
     uint64_t filesize;
     char *psz_base_url;
-};
+} access_sys_t;
 
 static int AuthKeyAgent( stream_t *p_access, const char *psz_username )
 {
@@ -288,8 +288,9 @@ static int Open( vlc_object_t* p_this )
     char *psz_knownhosts_file;
     if( asprintf( &psz_knownhosts_file, "%s/.ssh/known_hosts", psz_home ) != -1 )
     {
-        libssh2_knownhost_readfile( ssh_knownhosts, psz_knownhosts_file,
-                LIBSSH2_KNOWNHOST_FILE_OPENSSH );
+        if( libssh2_knownhost_readfile( ssh_knownhosts, psz_knownhosts_file,
+                                        LIBSSH2_KNOWNHOST_FILE_OPENSSH ) < 0 )
+            msg_Err( p_access, "Failure reading known_hosts '%s'", psz_knownhosts_file );
         free( psz_knownhosts_file );
     }
 
@@ -306,7 +307,19 @@ static int Open( vlc_object_t* p_this )
         case LIBSSH2_HOSTKEY_TYPE_DSS:
             knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_SSHDSS;
             break;
+#if LIBSSH2_VERSION_NUM >= 0x010801
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_256:
+            knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_ECDSA_256;
+            break;
 
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_384:
+            knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_ECDSA_384;
+            break;
+
+        case LIBSSH2_HOSTKEY_TYPE_ECDSA_521:
+            knownhost_fingerprint_algo = LIBSSH2_KNOWNHOST_KEY_ECDSA_521;
+            break;
+#endif
         default:
             msg_Err( p_access, "Host uses unrecognized session-key algorithm" );
             libssh2_knownhost_free( ssh_knownhosts );
@@ -314,12 +327,21 @@ static int Open( vlc_object_t* p_this )
 
     }
 
+#if LIBSSH2_VERSION_NUM >= 0x010206
+    int check = libssh2_knownhost_checkp( ssh_knownhosts, url.psz_host, i_port,
+                                         fingerprint, i_len,
+                                         LIBSSH2_KNOWNHOST_TYPE_PLAIN |
+                                         LIBSSH2_KNOWNHOST_KEYENC_RAW |
+                                         knownhost_fingerprint_algo,
+                                         &host );
+#else
     int check = libssh2_knownhost_check( ssh_knownhosts, url.psz_host,
                                          fingerprint, i_len,
                                          LIBSSH2_KNOWNHOST_TYPE_PLAIN |
                                          LIBSSH2_KNOWNHOST_KEYENC_RAW |
                                          knownhost_fingerprint_algo,
                                          &host );
+#endif
 
     libssh2_knownhost_free( ssh_knownhosts );
 
@@ -544,7 +566,6 @@ static int Control( stream_t* p_access, int i_query, va_list args )
 {
     access_sys_t *sys = p_access->p_sys;
     bool*       pb_bool;
-    int64_t*    pi_64;
 
     switch( i_query )
     {
@@ -571,9 +592,8 @@ static int Control( stream_t* p_access, int i_query, va_list args )
         break;
 
     case STREAM_GET_PTS_DELAY:
-        pi_64 = va_arg( args, int64_t * );
-        *pi_64 = INT64_C(1000)
-               * var_InheritInteger( p_access, "network-caching" );
+        *va_arg( args, vlc_tick_t * ) =
+            VLC_TICK_FROM_MS(var_InheritInteger( p_access, "network-caching" ));
         break;
 
     case STREAM_SET_PAUSE_STATE:

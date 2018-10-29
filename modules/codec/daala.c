@@ -45,7 +45,7 @@
 /*****************************************************************************
  * decoder_sys_t : daala decoder descriptor
  *****************************************************************************/
-struct decoder_sys_t
+typedef struct
 {
     /* Module mode */
     bool b_packetizer;
@@ -70,8 +70,8 @@ struct decoder_sys_t
     /*
      * Common properties
      */
-    mtime_t i_pts;
-};
+    vlc_tick_t i_pts;
+} decoder_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -154,10 +154,7 @@ static const char *const ppsz_enc_options[] = {
 };
 #endif
 
-/*****************************************************************************
- * OpenDecoder: probe the decoder and return score
- *****************************************************************************/
-static int OpenDecoder( vlc_object_t *p_this )
+static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
 {
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -173,18 +170,22 @@ static int OpenDecoder( vlc_object_t *p_this )
         return VLC_ENOMEM;
 
     p_dec->p_sys = p_sys;
-    p_dec->p_sys->b_packetizer = false;
+    p_dec->p_sys->b_packetizer = b_packetizer;
     p_sys->b_has_headers = false;
-    p_sys->i_pts = VLC_TS_INVALID;
+    p_sys->i_pts = VLC_TICK_INVALID;
     p_sys->b_decoded_first_keyframe = false;
     p_sys->dcx = NULL;
 
-    /* Set output properties */
-    p_dec->fmt_out.i_codec = VLC_CODEC_I420;
-
-    /* Set callbacks */
-    p_dec->pf_decode    = DecodeVideo;
-    p_dec->pf_packetize = Packetize;
+    if( b_packetizer )
+    {
+        p_dec->fmt_out.i_codec = VLC_CODEC_DAALA;
+        p_dec->pf_packetize = Packetize;
+    }
+    else
+    {
+        p_dec->fmt_out.i_codec = VLC_CODEC_I420;
+        p_dec->pf_decode = DecodeVideo;
+    }
 
     /* Init supporting Daala structures needed in header parsing */
     daala_comment_init( &p_sys->dc );
@@ -193,19 +194,17 @@ static int OpenDecoder( vlc_object_t *p_this )
     return VLC_SUCCESS;
 }
 
+/*****************************************************************************
+ * OpenDecoder: probe the decoder and return score
+ *****************************************************************************/
+static int OpenDecoder( vlc_object_t *p_this )
+{
+    return OpenCommon( p_this, false );
+}
+
 static int OpenPacketizer( vlc_object_t *p_this )
 {
-    decoder_t *p_dec = (decoder_t*)p_this;
-
-    int i_ret = OpenDecoder( p_this );
-
-    if( i_ret == VLC_SUCCESS )
-    {
-        p_dec->p_sys->b_packetizer = true;
-        p_dec->fmt_out.i_codec = VLC_CODEC_DAALA;
-    }
-
-    return i_ret;
+    return OpenCommon( p_this, true );
 }
 
 /****************************************************************************
@@ -431,7 +430,7 @@ static void *ProcessPacket( decoder_t *p_dec, daala_packet *p_dpacket,
     }
 
     /* Date management */
-    if( p_block->i_pts > VLC_TS_INVALID && p_block->i_pts != p_sys->i_pts )
+    if( p_block->i_pts != VLC_TICK_INVALID && p_block->i_pts != p_sys->i_pts )
     {
         p_sys->i_pts = p_block->i_pts;
     }
@@ -452,7 +451,7 @@ static void *ProcessPacket( decoder_t *p_dec, daala_packet *p_dpacket,
     }
 
     /* Date management */
-    p_sys->i_pts += ( CLOCK_FREQ * p_sys->di.timebase_denominator /
+    p_sys->i_pts += vlc_tick_from_samples( p_sys->di.timebase_denominator,
                       p_sys->di.timebase_numerator ); /* 1 frame per packet */
 
     return p_buf;
@@ -579,12 +578,12 @@ static void daala_CopyPicture( picture_t *p_pic,
 }
 
 #ifdef ENABLE_SOUT
-struct encoder_sys_t
+typedef struct
 {
     daala_info      di;                     /* daala bitstream settings */
     daala_comment   dc;                     /* daala comment header */
     daala_enc_ctx   *dcx;                   /* daala context */
-};
+} encoder_sys_t;
 
 static int OpenEncoder( vlc_object_t *p_this )
 {

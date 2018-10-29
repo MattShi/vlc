@@ -48,22 +48,11 @@
 #import "VLCResumeDialogController.h"
 #import "VLCOpenWindowController.h"
 
+#import "PXSourceList/PXSourceList.h"
+
 #include <vlc_actions.h>
 #import <vlc_interface.h>
 #include <vlc_url.h>
-
-/*****************************************************************************
- * An extension to NSOutlineView's interface to fix compilation warnings
- * and let us access these 2 functions properly.
- * This uses a private API, but works fine on all current OSX releases.
- * Radar ID 11739459 request a public API for this. However, it is probably
- * easier and faster to recreate similar looking bitmaps ourselves.
- *****************************************************************************/
-
-@interface NSOutlineView (UndocumentedSortImages)
-+ (NSImage *)_defaultTableHeaderSortImage;
-+ (NSImage *)_defaultTableHeaderReverseSortImage;
-@end
 
 @interface VLCPlaylist ()
 {
@@ -93,11 +82,8 @@
 {
     self = [super init];
     if (self) {
-        /* This uses a private API, but works fine on all current OSX releases.
-         * Radar ID 11739459 request a public API for this. However, it is probably
-         * easier and faster to recreate similar looking bitmaps ourselves. */
-        _ascendingSortingImage = [[NSOutlineView class] _defaultTableHeaderSortImage];
-        _descendingSortingImage = [[NSOutlineView class] _defaultTableHeaderReverseSortImage];
+        _ascendingSortingImage = [NSImage imageNamed:@"NSAscendingSortIndicator"];
+        _descendingSortingImage = [NSImage imageNamed:@"NSDescendingSortIndicator"];
 
         [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(applicationWillTerminate:) name: NSApplicationWillTerminateNotification object: nil];
 
@@ -192,29 +178,39 @@
 
 - (void)setPlaylistHeaderView:(NSTableHeaderView * __nullable)playlistHeaderView
 {
-    VLCMainMenu *mainMenu = [[VLCMain sharedInstance] mainMenu];
     _playlistHeaderView = playlistHeaderView;
 
     // Setup playlist table column selection for both context and main menu
     NSMenu *contextMenu = [[NSMenu alloc] init];
     [self setupPlaylistTableColumnsForMenu:contextMenu];
-    [_playlistHeaderView setMenu: contextMenu];
+    [_playlistHeaderView setMenu:contextMenu];
     [self setupPlaylistTableColumnsForMenu:[[[VLCMain sharedInstance] mainMenu] playlistTableColumnsMenu]];
 
-    NSArray * columnArray = [[NSUserDefaults standardUserDefaults] arrayForKey:@"PlaylistColumnSelection"];
-    NSUInteger columnCount = [columnArray count];
-    NSString * column;
+    NSArray *columnArray = [[NSUserDefaults standardUserDefaults] arrayForKey:@"PlaylistColumnSelection"];
 
-    for (NSUInteger i = 0; i < columnCount; i++) {
-        column = [[columnArray objectAtIndex:i] firstObject];
-        if ([column isEqualToString:@"status"])
+    BOOL hasTitleItem = NO;
+
+    for (NSArray *column in columnArray) {
+        NSString *columnName = column[0];
+        NSNumber *columnWidth = column[1];
+
+        if ([columnName isEqualToString:STATUS_COLUMN])
             continue;
 
-        if(![self setPlaylistColumnTableState: NSOnState forColumn:column])
+        // Memorize if we custom set always-enabled title item
+        if ([columnName isEqualToString:TITLE_COLUMN]) {
+            hasTitleItem = YES;
+        }
+
+        if(![self setPlaylistColumnTableState: NSOnState forColumn:columnName])
             continue;
 
-        [[_outlineView tableColumnWithIdentifier: column] setWidth: [[[columnArray objectAtIndex:i] objectAtIndex:1] floatValue]];
+        [[_outlineView tableColumnWithIdentifier:columnName] setWidth:[columnWidth floatValue]];
     }
+
+    // Set the always enabled title item if not already done
+    if (!hasTitleItem)
+        [self setPlaylistColumnTableState:NSOnState forColumn:TITLE_COLUMN];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification
@@ -269,7 +265,7 @@
             tmpItem = [tmpItem parent];
         }
 
-        for(int i = itemsToExpand.count - 1; i >= 0; i--) {
+        for(int i = (int)itemsToExpand.count - 1; i >= 0; i--) {
             VLCPLItem *currentItem = [itemsToExpand objectAtIndex:i];
             [_outlineView expandItem: currentItem];
         }
@@ -348,11 +344,11 @@
 {
     NSIndexSet *selectedRows = [_outlineView selectedRowIndexes];
 
-    NSInteger position = -1;
+    int position = -1;
     VLCPLItem *parentItem = [[self model] rootItem];
 
     if (selectedRows.count >= 1) {
-        position = selectedRows.firstIndex + 1;
+        position = (int)selectedRows.firstIndex + 1;
         parentItem = [_outlineView itemAtRow:selectedRows.firstIndex];
         if ([parentItem parent] != nil)
             parentItem = [parentItem parent];
@@ -369,6 +365,7 @@
 - (IBAction)deleteItem:(id)sender
 {
     [_model deleteSelectedItem];
+    [[[[VLCMain sharedInstance] mainWindow] sidebarView] performSelector:@selector(reloadData) withObject:nil afterDelay:0.15];
 }
 
 // Actions for playlist column selections
@@ -504,7 +501,6 @@
 - (input_item_t *)createItem:(NSDictionary *)itemToCreateDict
 {
     intf_thread_t *p_intf = getIntf();
-    playlist_t *p_playlist = pl_Get(p_intf);
 
     input_item_t *p_input;
     BOOL b_rem = FALSE, b_dir = FALSE, b_writable = FALSE;
@@ -591,10 +587,6 @@
 
     int i_plItemId = -1;
 
-    // add items directly to media library if this is the current root
-    if ([[self model] currentRootType] == ROOT_TYPE_MEDIALIBRARY)
-        i_plItemId = [[[self model] rootItem] plItemId];
-
     BOOL b_autoplay = var_InheritBool(getIntf(), "macosx-autoplay");
 
     [self addPlaylistItems:array withParentItemId:i_plItemId atPos:-1 startPlayback:b_autoplay];
@@ -656,6 +648,7 @@
         input_item_Release(p_input);
     }
     PL_UNLOCK;
+    [[[[VLCMain sharedInstance] mainWindow] sidebarView] performSelector:@selector(reloadData) withObject:nil afterDelay:0.15];
 }
 
 - (IBAction)recursiveExpandOrCollapseNode:(id)sender
@@ -668,7 +661,6 @@
     [selectedRows getIndexes:indexes maxCount:count inIndexRange:nil];
 
     id item;
-    playlist_item_t *p_item;
     for (NSUInteger i = 0; i < count; i++) {
         item = [_outlineView itemAtRow: indexes[i]];
 
@@ -689,10 +681,10 @@
 - (NSMenu *)menuForEvent:(NSEvent *)o_event
 {
     if (!b_playlistmenu_nib_loaded)
-        b_playlistmenu_nib_loaded = [NSBundle loadNibNamed:@"PlaylistMenu" owner:self];
+        b_playlistmenu_nib_loaded = [[NSBundle mainBundle] loadNibNamed:@"PlaylistMenu" owner:self topLevelObjects:nil];
 
     NSPoint pt = [_outlineView convertPoint: [o_event locationInWindow] fromView: nil];
-    int row = [_outlineView rowAtPoint:pt];
+    NSInteger row = [_outlineView rowAtPoint:pt];
     if (row != -1 && ![[_outlineView selectedRowIndexes] containsIndex: row])
         [_outlineView selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
 
@@ -705,10 +697,7 @@
 - (void)outlineView:(NSOutlineView *)outlineView didClickTableColumn:(NSTableColumn *)aTableColumn
 {
     int type = 0;
-    intf_thread_t *p_intf = getIntf();
     NSString * identifier = [aTableColumn identifier];
-
-    playlist_t *p_playlist = pl_Get(p_intf);
 
     if (_sortTableColumn == aTableColumn)
         b_isSortDescending = !b_isSortDescending;

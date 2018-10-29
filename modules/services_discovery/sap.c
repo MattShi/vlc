@@ -54,7 +54,7 @@
 #   include <zlib.h>
 #endif
 
-#ifndef _WIN32
+#ifdef HAVE_NET_IF_H
 #   include <net/if.h>
 #endif
 
@@ -198,8 +198,8 @@ struct attribute_t
 
 struct sap_announce_t
 {
-    mtime_t i_last;
-    mtime_t i_period;
+    vlc_tick_t i_last;
+    vlc_tick_t i_period;
     uint8_t i_period_trust;
 
     uint16_t    i_hash;
@@ -211,7 +211,7 @@ struct sap_announce_t
     input_item_t * p_item;
 };
 
-struct services_discovery_sys_t
+typedef struct
 {
     vlc_thread_t thread;
 
@@ -227,13 +227,13 @@ struct services_discovery_sys_t
     bool  b_strict;
     bool  b_parse;
 
-    int i_timeout;
-};
+    vlc_tick_t i_timeout;
+} services_discovery_sys_t;
 
-struct demux_sys_t
+typedef struct
 {
     sdp_t *p_sdp;
-};
+} demux_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -264,11 +264,6 @@ struct demux_sys_t
     static int Decompress( const unsigned char *psz_src, unsigned char **_dst, int i_len );
     static void FreeSDP( sdp_t *p_sdp );
 
-static inline int min_int( int a, int b )
-{
-    return a > b ? b : a;
-}
-
 static bool IsWellKnownPayload (int type)
 {
     switch (type)
@@ -298,7 +293,7 @@ static int Open( vlc_object_t *p_this )
     if( !p_sys )
         return VLC_ENOMEM;
 
-    p_sys->i_timeout = var_CreateGetInteger( p_sd, "sap-timeout" );
+    p_sys->i_timeout = vlc_tick_from_sec(var_CreateGetInteger( p_sd, "sap-timeout" ));
 
     p_sd->p_sys  = p_sys;
     p_sd->description = _("Network streams (SAP)");
@@ -458,6 +453,7 @@ static void CloseDemux( vlc_object_t *p_this )
 static void *Run( void *data )
 {
     services_discovery_t *p_sd = data;
+    services_discovery_sys_t *p_sys = p_sd->p_sys;
     char *psz_addr;
     int timeout = -1;
     int canc = vlc_savecancel ();
@@ -524,7 +520,7 @@ static void *Run( void *data )
         InitSocket( p_sd, psz_addr, SAP_PORT );
     free( psz_addr );
 
-    if( p_sd->p_sys->i_fd == 0 )
+    if( p_sys->i_fd == 0 )
     {
         msg_Err( p_sd, "unable to listen on any address" );
         return NULL;
@@ -534,12 +530,12 @@ static void *Run( void *data )
     for (;;)
     {
         vlc_restorecancel (canc);
-        unsigned n = p_sd->p_sys->i_fd;
+        unsigned n = p_sys->i_fd;
         struct pollfd ufd[n];
 
         for (unsigned i = 0; i < n; i++)
         {
-            ufd[i].fd = p_sd->p_sys->pi_fd[i];
+            ufd[i].fd = p_sys->pi_fd[i];
             ufd[i].events = POLLIN;
             ufd[i].revents = 0;
         }
@@ -569,24 +565,23 @@ static void *Run( void *data )
             }
         }
 
-        mtime_t now = mdate();
+        vlc_tick_t now = vlc_tick_now();
 
         /* A 1 hour timeout correspond to the RFC Implicit timeout.
          * This timeout is tuned in the following loop. */
         timeout = 1000 * 60 * 60;
 
         /* Check for items that need deletion */
-        for( int i = 0; i < p_sd->p_sys->i_announces; i++ )
+        for( int i = 0; i < p_sys->i_announces; i++ )
         {
-            mtime_t i_timeout = ( mtime_t ) 1000000 * p_sd->p_sys->i_timeout;
-            sap_announce_t * p_announce = p_sd->p_sys->pp_announces[i];
-            mtime_t i_last_period = now - p_announce->i_last;
+            sap_announce_t * p_announce = p_sys->pp_announces[i];
+            vlc_tick_t i_last_period = now - p_announce->i_last;
 
             /* Remove the announcement, if the last announcement was 1 hour ago
              * or if the last packet emitted was 10 times the average time
              * between two packets */
             if( ( p_announce->i_period_trust > 5 && i_last_period > 10 * p_announce->i_period ) ||
-                i_last_period > i_timeout )
+                i_last_period > p_sys->i_timeout )
             {
                 RemoveAnnounce( p_sd, p_announce );
             }
@@ -594,12 +589,12 @@ static void *Run( void *data )
             {
                 /* Compute next timeout */
                 if( p_announce->i_period_trust > 5 )
-                    timeout = min_int((10 * p_announce->i_period - i_last_period) / 1000, timeout);
-                timeout = min_int((i_timeout - i_last_period)/1000, timeout);
+                    timeout = __MIN(MS_FROM_VLC_TICK(10 * p_announce->i_period - i_last_period), timeout);
+                timeout = __MIN(MS_FROM_VLC_TICK(p_sys->i_timeout - i_last_period), timeout);
             }
         }
 
-        if( !p_sd->p_sys->i_announces )
+        if( !p_sys->i_announces )
             timeout = -1; /* We can safely poll indefinitely. */
         else if( timeout < 200 )
             timeout = 200; /* Don't wakeup too fast. */
@@ -615,18 +610,13 @@ static int Demux( demux_t *p_demux )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
     sdp_t *p_sdp = p_sys->p_sdp;
-    input_thread_t *p_input = p_demux->p_input;
-    input_item_t *p_parent_input;
+    input_item_t *p_parent_input = p_demux->p_input_item;
 
-    if( !p_input )
+    if( !p_parent_input )
     {
         msg_Err( p_demux, "parent input could not be found" );
         return VLC_EGENERIC;
     }
-
-    /* This item hasn't been held by input_GetItem
-     * don't release it */
-    p_parent_input = input_GetItem( p_input );
 
     input_item_SetURI( p_parent_input, p_sdp->psz_uri );
     input_item_SetName( p_parent_input, p_sdp->psz_sessionname );
@@ -663,6 +653,7 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
 static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
                      size_t len )
 {
+    services_discovery_sys_t *p_sys = p_sd->p_sys;
     const char          *psz_sdp;
     const uint8_t *end = buf + len;
     sdp_t               *p_sdp;
@@ -693,7 +684,7 @@ static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
 
     uint16_t i_hash = U16_AT (buf + 2);
 
-    if( p_sd->p_sys->b_strict && i_hash == 0 )
+    if( p_sys->b_strict && i_hash == 0 )
     {
         msg_Dbg( p_sd, "strict mode, discarding announce with null id hash");
         return VLC_EGENERIC;
@@ -774,7 +765,7 @@ static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
         p_sdp->psz_uri = NULL;
 
     /* Multi-media or no-parse -> pass to LIVE.COM */
-    if( !IsWellKnownPayload( p_sdp->i_media_type ) || !p_sd->p_sys->b_parse )
+    if( !IsWellKnownPayload( p_sdp->i_media_type ) || !p_sys->b_parse )
     {
         free( p_sdp->psz_uri );
         if (asprintf( &p_sdp->psz_uri, "sdp://%s", p_sdp->psz_sdp ) == -1)
@@ -787,9 +778,9 @@ static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
         goto error;
     }
 
-    for( int i = 0 ; i< p_sd->p_sys->i_announces ; i++ )
+    for( int i = 0 ; i < p_sys->i_announces ; i++ )
     {
-        sap_announce_t * p_announce = p_sd->p_sys->pp_announces[i];
+        sap_announce_t * p_announce = p_sys->pp_announces[i];
         /* FIXME: slow */
         if( ( !i_hash && IsSameSession( p_announce->p_sdp, p_sdp ) )
             || ( i_hash && p_announce->i_hash == i_hash
@@ -800,7 +791,7 @@ static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
              * Instead we cleverly implement Implicit Announcement removal.
              *
              * if( b_need_delete )
-             *    RemoveAnnounce( p_sd, p_sd->p_sys->pp_announces[i]);
+             *    RemoveAnnounce( p_sd, p_sys->pp_announces[i]);
              * else
              */
 
@@ -812,7 +803,7 @@ static int ParseSAP( services_discovery_t *p_sd, const uint8_t *buf,
                     p_announce->i_period_trust++;
 
                 /* Compute the average period */
-                mtime_t now = mdate();
+                vlc_tick_t now = vlc_tick_now();
                 p_announce->i_period = ( p_announce->i_period * (p_announce->i_period_trust-1) + (now - p_announce->i_last) ) / p_announce->i_period_trust;
                 p_announce->i_last = now;
             }
@@ -844,7 +835,7 @@ sap_announce_t *CreateAnnounce( services_discovery_t *p_sd, uint32_t *i_source, 
 
     p_sys = p_sd->p_sys;
 
-    p_sap->i_last = mdate();
+    p_sap->i_last = vlc_tick_now();
     p_sap->i_period = 0;
     p_sap->i_period_trust = 0;
     p_sap->i_hash = i_hash;
@@ -853,7 +844,7 @@ sap_announce_t *CreateAnnounce( services_discovery_t *p_sd, uint32_t *i_source, 
 
     /* Released in RemoveAnnounce */
     p_input = input_item_NewStream( p_sap->p_sdp->psz_uri, p_sdp->psz_sessionname,
-                                    -1 );
+                                    INPUT_DURATION_INDEFINITE );
     if( unlikely(p_input == NULL) )
     {
         free( p_sap );
@@ -1481,7 +1472,8 @@ static int InitSocket( services_discovery_t *p_sd, const char *psz_address,
         return VLC_EGENERIC;
 
     shutdown( i_fd, SHUT_WR );
-    TAB_APPEND(p_sd->p_sys->i_fd, p_sd->p_sys->pi_fd, i_fd);
+    services_discovery_sys_t *p_sys = p_sd->p_sys;
+    TAB_APPEND(p_sys->i_fd, p_sys->pi_fd, i_fd);
     return VLC_SUCCESS;
 }
 
@@ -1572,8 +1564,8 @@ static int RemoveAnnounce( services_discovery_t *p_sd,
         p_announce->p_item = NULL;
     }
 
-    TAB_REMOVE(p_sd->p_sys->i_announces, p_sd->p_sys->pp_announces,
-               p_announce);
+    services_discovery_sys_t *p_sys = p_sd->p_sys;
+    TAB_REMOVE(p_sys->i_announces, p_sys->pp_announces, p_announce);
     free( p_announce );
 
     return VLC_SUCCESS;

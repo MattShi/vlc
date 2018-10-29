@@ -36,9 +36,9 @@
 #include "../video_output/android/utils.h"
 
 #define SMOOTHPOS_SAMPLE_COUNT 10
-#define SMOOTHPOS_INTERVAL_US INT64_C(30000) // 30ms
+#define SMOOTHPOS_INTERVAL_US VLC_TICK_FROM_MS(30) // 30ms
 
-#define AUDIOTIMESTAMP_INTERVAL_US INT64_C(500000) // 500ms
+#define AUDIOTIMESTAMP_INTERVAL_US VLC_TICK_FROM_MS(500) // 500ms
 
 static int  Open( vlc_object_t * );
 static void Close( vlc_object_t * );
@@ -79,7 +79,8 @@ static const struct {
     {  NULL, NULL, AT_DEV_DEFAULT },
 };
 
-struct aout_sys_t {
+typedef struct
+{
     /* sw gain */
     float soft_gain;
     bool soft_mute;
@@ -106,20 +107,20 @@ struct aout_sys_t {
     /* Used by AudioTrack_GetTimestampPositionUs */
     struct {
         jobject p_obj; /* AudioTimestamp ref */
-        jlong i_frame_us;
+        vlc_tick_t i_frame_us;
         jlong i_frame_pos;
-        mtime_t i_play_time; /* time when play was called */
-        mtime_t i_last_time;
+        vlc_tick_t i_play_time; /* time when play was called */
+        vlc_tick_t i_last_time;
     } timestamp;
 
     /* Used by AudioTrack_GetSmoothPositionUs */
     struct {
         uint32_t i_idx;
         uint32_t i_count;
-        mtime_t p_us[SMOOTHPOS_SAMPLE_COUNT];
-        mtime_t i_us;
-        mtime_t i_last_time;
-        mtime_t i_latency_us;
+        vlc_tick_t p_us[SMOOTHPOS_SAMPLE_COUNT];
+        vlc_tick_t i_us;
+        vlc_tick_t i_last_time;
+        vlc_tick_t i_latency_us;
     } smoothpos;
 
     uint32_t i_max_audiotrack_samples;
@@ -166,7 +167,7 @@ struct aout_sys_t {
             } bytebuffer;
         } u;
     } circular;
-};
+} aout_sys_t;
 
 /* Soft volume helper */
 #include "audio_output/volume.h"
@@ -179,12 +180,17 @@ struct aout_sys_t {
  * will be done by VLC */
 #define AUDIOTRACK_NATIVE_SAMPLERATE
 
+#define AUDIOTRACK_SESSION_ID_TEXT " Id of audio session the AudioTrack must be attached to"
+
 vlc_module_begin ()
     set_shortname( "AudioTrack" )
     set_description( "Android AudioTrack audio output" )
     set_capability( "audio output", 180 )
     set_category( CAT_AUDIO )
     set_subcategory( SUBCAT_AUDIO_AOUT )
+    add_integer( "audiotrack-session-id", 0,
+            AUDIOTRACK_SESSION_ID_TEXT, NULL, true )
+        change_private()
     add_sw_gain()
     add_shortcut( "audiotrack" )
     set_callbacks( Open, Close )
@@ -198,6 +204,7 @@ static struct
     struct {
         jclass clazz;
         jmethodID ctor;
+        bool has_ctor_21;
         jmethodID release;
         jmethodID getState;
         jmethodID play;
@@ -220,6 +227,12 @@ static struct
         jint ERROR_INVALID_OPERATION;
         jint WRITE_NON_BLOCKING;
     } AudioTrack;
+    struct {
+        jclass clazz;
+        jmethodID ctor;
+        jmethodID build;
+        jmethodID setLegacyStreamType;
+    } AudioAttributes_Builder;
     struct {
         jint ENCODING_PCM_8BIT;
         jint ENCODING_PCM_16BIT;
@@ -251,6 +264,14 @@ static struct
         jint CHANNEL_OUT_SIDE_RIGHT;
         bool has_CHANNEL_OUT_SIDE;
     } AudioFormat;
+    struct {
+        jclass clazz;
+        jmethodID ctor;
+        jmethodID build;
+        jmethodID setChannelMask;
+        jmethodID setEncoding;
+        jmethodID setSampleRate;
+    } AudioFormat_Builder;
     struct {
         jint ERROR_DEAD_OBJECT;
         bool has_ERROR_DEAD_OBJECT;
@@ -320,7 +341,11 @@ InitJNIFields( audio_output_t *p_aout, JNIEnv* env )
     jfields.AudioTrack.clazz = (jclass) (*env)->NewGlobalRef( env, clazz );
     CHECK_EXCEPTION( "NewGlobalRef", true );
 
-    GET_ID( GetMethodID, AudioTrack.ctor, "<init>", "(IIIIII)V", true );
+    GET_ID( GetMethodID, AudioTrack.ctor, "<init>",
+            "(Landroid/media/AudioAttributes;Landroid/media/AudioFormat;III)V", false );
+    jfields.AudioTrack.has_ctor_21 = jfields.AudioTrack.ctor != NULL;
+    if( !jfields.AudioTrack.has_ctor_21 )
+        GET_ID( GetMethodID, AudioTrack.ctor, "<init>", "(IIIIIII)V", true );
     GET_ID( GetMethodID, AudioTrack.release, "release", "()V", true );
     GET_ID( GetMethodID, AudioTrack.getState, "getState", "()I", true );
     GET_ID( GetMethodID, AudioTrack.play, "play", "()V", true );
@@ -359,6 +384,35 @@ InitJNIFields( audio_output_t *p_aout, JNIEnv* env )
     GET_CONST_INT( AudioTrack.ERROR_BAD_VALUE , "ERROR_BAD_VALUE", true );
     GET_CONST_INT( AudioTrack.ERROR_INVALID_OPERATION,
                    "ERROR_INVALID_OPERATION", true );
+
+    if( jfields.AudioTrack.has_ctor_21 )
+    {
+        /* AudioAttributes_Builder class init */
+        GET_CLASS( "android/media/AudioAttributes$Builder", true );
+        jfields.AudioAttributes_Builder.clazz = (jclass) (*env)->NewGlobalRef( env, clazz );
+        CHECK_EXCEPTION( "NewGlobalRef", true );
+        GET_ID( GetMethodID, AudioAttributes_Builder.ctor, "<init>",
+                "()V", true );
+        GET_ID( GetMethodID, AudioAttributes_Builder.build, "build",
+                "()Landroid/media/AudioAttributes;", true );
+        GET_ID( GetMethodID, AudioAttributes_Builder.setLegacyStreamType, "setLegacyStreamType",
+                "(I)Landroid/media/AudioAttributes$Builder;", true );
+
+        /* AudioFormat_Builder class init */
+        GET_CLASS( "android/media/AudioFormat$Builder", true );
+        jfields.AudioFormat_Builder.clazz = (jclass) (*env)->NewGlobalRef( env, clazz );
+        CHECK_EXCEPTION( "NewGlobalRef", true );
+        GET_ID( GetMethodID, AudioFormat_Builder.ctor, "<init>",
+                "()V", true );
+        GET_ID( GetMethodID, AudioFormat_Builder.build, "build",
+                "()Landroid/media/AudioFormat;", true );
+        GET_ID( GetMethodID, AudioFormat_Builder.setChannelMask, "setChannelMask",
+                "(I)Landroid/media/AudioFormat$Builder;", true );
+        GET_ID( GetMethodID, AudioFormat_Builder.setEncoding, "setEncoding",
+                "(I)Landroid/media/AudioFormat$Builder;", true );
+        GET_ID( GetMethodID, AudioFormat_Builder.setSampleRate, "setSampleRate",
+                "(I)Landroid/media/AudioFormat$Builder;", true );
+    }
 
     /* AudioTimestamp class init (if any) */
     if( jfields.AudioTrack.getTimestamp )
@@ -461,7 +515,7 @@ end:
 
 static inline bool
 check_exception( JNIEnv *env, audio_output_t *p_aout,
-                 const char *method )
+                 const char *class, const char *method )
 {
     if( (*env)->ExceptionCheck( env ) )
     {
@@ -471,17 +525,20 @@ check_exception( JNIEnv *env, audio_output_t *p_aout,
         p_sys->b_error = true;
         (*env)->ExceptionDescribe( env );
         (*env)->ExceptionClear( env );
-        msg_Err( p_aout, "AudioTrack.%s triggered an exception !", method );
+        msg_Err( p_aout, "%s.%s triggered an exception !", class, method );
         return true;
     } else
         return false;
 }
-#define CHECK_AT_EXCEPTION( method ) check_exception( env, p_aout, method )
+
+#define CHECK_EXCEPTION( class, method ) check_exception( env, p_aout, class, method )
+#define CHECK_AT_EXCEPTION( method ) check_exception( env, p_aout, "AudioTrack", method )
 
 #define JNI_CALL( what, obj, method, ... ) (*env)->what( env, obj, method, ##__VA_ARGS__ )
 
 #define JNI_CALL_INT( obj, method, ... ) JNI_CALL( CallIntMethod, obj, method, ##__VA_ARGS__ )
 #define JNI_CALL_BOOL( obj, method, ... ) JNI_CALL( CallBooleanMethod, obj, method, ##__VA_ARGS__ )
+#define JNI_CALL_OBJECT( obj, method, ... ) JNI_CALL( CallObjectMethod, obj, method, ##__VA_ARGS__ )
 #define JNI_CALL_VOID( obj, method, ... ) JNI_CALL( CallVoidMethod, obj, method, ##__VA_ARGS__ )
 #define JNI_CALL_STATIC_INT( clazz, method, ... ) JNI_CALL( CallStaticIntMethod, clazz, method, ##__VA_ARGS__ )
 
@@ -493,10 +550,10 @@ check_exception( JNIEnv *env, audio_output_t *p_aout,
 
 #define JNI_AUDIOTIMESTAMP_GET_LONG( field ) JNI_CALL( GetLongField, p_sys->timestamp.p_obj, jfields.AudioTimestamp.field )
 
-static inline mtime_t
+static inline vlc_tick_t
 frames_to_us( aout_sys_t *p_sys, uint64_t i_nb_frames )
 {
-    return  i_nb_frames * CLOCK_FREQ / p_sys->fmt.i_rate;
+    return  vlc_tick_from_samples(i_nb_frames, p_sys->fmt.i_rate);
 }
 #define FRAMES_TO_US(x) frames_to_us( p_sys, (x) )
 
@@ -571,7 +628,7 @@ AudioTrack_ResetPositions( JNIEnv *env, audio_output_t *p_aout )
     aout_sys_t *p_sys = p_aout->sys;
     VLC_UNUSED( env );
 
-    p_sys->timestamp.i_play_time = mdate();
+    p_sys->timestamp.i_play_time = vlc_tick_now();
     p_sys->timestamp.i_last_time = 0;
     p_sys->timestamp.i_frame_us = 0;
     p_sys->timestamp.i_frame_pos = 0;
@@ -602,12 +659,12 @@ AudioTrack_Reset( JNIEnv *env, audio_output_t *p_aout )
  * This function smooth out the AudioTrack position since it has a very bad
  * precision (+/- 20ms on old devices).
  */
-static mtime_t
+static vlc_tick_t
 AudioTrack_GetSmoothPositionUs( JNIEnv *env, audio_output_t *p_aout )
 {
     aout_sys_t *p_sys = p_aout->sys;
     uint64_t i_audiotrack_us;
-    mtime_t i_now = mdate();
+    vlc_tick_t i_now = vlc_tick_now();
 
     /* Fetch an AudioTrack position every SMOOTHPOS_INTERVAL_US (30ms) */
     if( i_now - p_sys->smoothpos.i_last_time >= SMOOTHPOS_INTERVAL_US )
@@ -646,16 +703,16 @@ AudioTrack_GetSmoothPositionUs( JNIEnv *env, audio_output_t *p_aout )
         return 0;
 }
 
-static mtime_t
+static vlc_tick_t
 AudioTrack_GetTimestampPositionUs( JNIEnv *env, audio_output_t *p_aout )
 {
     aout_sys_t *p_sys = p_aout->sys;
-    mtime_t i_now;
+    vlc_tick_t i_now;
 
     if( !p_sys->timestamp.p_obj )
         return 0;
 
-    i_now = mdate();
+    i_now = vlc_tick_now();
 
     /* Android doc:
      * getTimestamp: Poll for a timestamp on demand.
@@ -680,7 +737,7 @@ AudioTrack_GetTimestampPositionUs( JNIEnv *env, audio_output_t *p_aout )
 
         if( JNI_AT_CALL_BOOL( getTimestamp, p_sys->timestamp.p_obj ) )
         {
-            p_sys->timestamp.i_frame_us = JNI_AUDIOTIMESTAMP_GET_LONG( nanoTime ) / 1000;
+            p_sys->timestamp.i_frame_us = VLC_TICK_FROM_NS(JNI_AUDIOTIMESTAMP_GET_LONG( nanoTime ));
             p_sys->timestamp.i_frame_pos = JNI_AUDIOTIMESTAMP_GET_LONG( framePosition );
         }
         else
@@ -696,20 +753,20 @@ AudioTrack_GetTimestampPositionUs( JNIEnv *env, audio_output_t *p_aout )
     if( p_sys->timestamp.i_frame_us != 0 && p_sys->timestamp.i_frame_pos != 0
      && p_sys->timestamp.i_frame_us > p_sys->timestamp.i_play_time
      && i_now > p_sys->timestamp.i_frame_us
-     && ( i_now - p_sys->timestamp.i_frame_us ) <= INT64_C(10000000) )
+     && ( i_now - p_sys->timestamp.i_frame_us ) <= VLC_TICK_FROM_SEC(10) )
     {
-        jlong i_time_diff = i_now - p_sys->timestamp.i_frame_us;
-        jlong i_frames_diff = i_time_diff * p_sys->fmt.i_rate / CLOCK_FREQ;
+        vlc_tick_t i_time_diff = i_now - p_sys->timestamp.i_frame_us;
+        jlong i_frames_diff = samples_from_vlc_tick(i_time_diff, p_sys->fmt.i_rate);
         return FRAMES_TO_US( p_sys->timestamp.i_frame_pos + i_frames_diff );
     } else
         return 0;
 }
 
 static int
-TimeGet( audio_output_t *p_aout, mtime_t *restrict p_delay )
+TimeGet( audio_output_t *p_aout, vlc_tick_t *restrict p_delay )
 {
     aout_sys_t *p_sys = p_aout->sys;
-    mtime_t i_audiotrack_us;
+    vlc_tick_t i_audiotrack_us;
     JNIEnv *env;
 
     if( p_sys->b_passthrough )
@@ -728,14 +785,14 @@ TimeGet( audio_output_t *p_aout, mtime_t *restrict p_delay )
 /* Debug log for both delays */
 #if 0
 {
-    mtime_t i_written_us = FRAMES_TO_US( p_sys->i_samples_written );
-    mtime_t i_ts_us = AudioTrack_GetTimestampPositionUs( env, p_aout );
-    mtime_t i_smooth_us = 0;
+    vlc_tick_t i_written_us = FRAMES_TO_US( p_sys->i_samples_written );
+    vlc_tick_t i_ts_us = AudioTrack_GetTimestampPositionUs( env, p_aout );
+    vlc_tick_t i_smooth_us = 0;
 
     if( i_ts_us > 0 )
         i_smooth_us = AudioTrack_GetSmoothPositionUs(env, p_aout );
     else if ( p_sys->smoothpos.i_us != 0 )
-        i_smooth_us = p_sys->smoothpos.i_us + mdate()
+        i_smooth_us = p_sys->smoothpos.i_us + vlc_tick_now()
             - p_sys->smoothpos.i_latency_us;
 
     msg_Err( p_aout, "TimeGet: TimeStamp: %lld, Smooth: %lld (latency: %lld)",
@@ -748,7 +805,7 @@ TimeGet( audio_output_t *p_aout, mtime_t *restrict p_delay )
     if( i_audiotrack_us > 0 )
     {
         /* AudioTrack delay */
-        mtime_t i_delay = FRAMES_TO_US( p_sys->i_samples_written )
+        vlc_tick_t i_delay = FRAMES_TO_US( p_sys->i_samples_written )
                         - i_audiotrack_us;
         if( i_delay >= 0 )
         {
@@ -806,6 +863,99 @@ AudioTrack_GetChanOrder( uint16_t i_physical_channels, uint32_t p_chans_out[] )
 #undef HAS_CHAN
 }
 
+static jobject
+AudioTrack_New21( JNIEnv *env, audio_output_t *p_aout, unsigned int i_rate,
+                  int i_channel_config, int i_format, int i_size,
+                  jint session_id )
+{
+    jobject p_audiotrack = NULL;
+    jobject p_aattr_builder = NULL;
+    jobject p_audio_attributes = NULL;
+    jobject p_afmt_builder = NULL;
+    jobject p_audio_format = NULL;
+    jobject ref;
+
+    p_aattr_builder =
+        JNI_CALL( NewObject,
+                  jfields.AudioAttributes_Builder.clazz,
+                  jfields.AudioAttributes_Builder.ctor );
+    if( !p_aattr_builder )
+        return NULL;
+
+    ref = JNI_CALL_OBJECT( p_aattr_builder,
+                           jfields.AudioAttributes_Builder.setLegacyStreamType,
+                           jfields.AudioManager.STREAM_MUSIC );
+    (*env)->DeleteLocalRef( env, ref );
+
+    p_audio_attributes =
+        JNI_CALL_OBJECT( p_aattr_builder,
+                         jfields.AudioAttributes_Builder.build );
+    if( !p_audio_attributes )
+        goto del_local_refs;
+
+    p_afmt_builder = JNI_CALL( NewObject,
+                               jfields.AudioFormat_Builder.clazz,
+                               jfields.AudioFormat_Builder.ctor );
+    if( !p_afmt_builder )
+        goto del_local_refs;
+
+    ref = JNI_CALL_OBJECT( p_afmt_builder,
+                           jfields.AudioFormat_Builder.setChannelMask,
+                           i_channel_config );
+    if( CHECK_EXCEPTION( "AudioFormat.Builder", "setChannelMask" ) )
+    {
+        (*env)->DeleteLocalRef( env, ref );
+        goto del_local_refs;
+    }
+    (*env)->DeleteLocalRef( env, ref );
+
+    ref = JNI_CALL_OBJECT( p_afmt_builder,
+                           jfields.AudioFormat_Builder.setEncoding,
+                           i_format );
+    if( CHECK_EXCEPTION( "AudioFormat.Builder", "setEncoding" ) )
+    {
+        (*env)->DeleteLocalRef( env, ref );
+        goto del_local_refs;
+    }
+    (*env)->DeleteLocalRef( env, ref );
+
+    ref = JNI_CALL_OBJECT( p_afmt_builder,
+                           jfields.AudioFormat_Builder.setSampleRate,
+                           i_rate );
+    if( CHECK_EXCEPTION( "AudioFormat.Builder", "setSampleRate" ) )
+    {
+        (*env)->DeleteLocalRef( env, ref );
+        goto del_local_refs;
+    }
+    (*env)->DeleteLocalRef( env, ref );
+
+    p_audio_format = JNI_CALL_OBJECT( p_afmt_builder,
+                                      jfields.AudioFormat_Builder.build );
+    if(!p_audio_format)
+        goto del_local_refs;
+
+    p_audiotrack = JNI_AT_NEW( p_audio_attributes, p_audio_format, i_size,
+                               jfields.AudioTrack.MODE_STREAM, session_id );
+
+del_local_refs:
+    (*env)->DeleteLocalRef( env, p_aattr_builder );
+    (*env)->DeleteLocalRef( env, p_audio_attributes );
+    (*env)->DeleteLocalRef( env, p_afmt_builder );
+    (*env)->DeleteLocalRef( env, p_audio_format );
+    return p_audiotrack;
+}
+
+static jobject
+AudioTrack_NewLegacy( JNIEnv *env, audio_output_t *p_aout, unsigned int i_rate,
+                      int i_channel_config, int i_format, int i_size,
+                      jint session_id )
+{
+    VLC_UNUSED( p_aout );
+    return JNI_AT_NEW( jfields.AudioManager.STREAM_MUSIC, i_rate,
+                       i_channel_config, i_format, i_size,
+                       jfields.AudioTrack.MODE_STREAM, session_id );
+}
+
 /**
  * Create an Android AudioTrack.
  * returns -1 on error, 0 on success.
@@ -815,12 +965,19 @@ AudioTrack_New( JNIEnv *env, audio_output_t *p_aout, unsigned int i_rate,
                 int i_channel_config, int i_format, int i_size )
 {
     aout_sys_t *p_sys = p_aout->sys;
-    jobject p_audiotrack = JNI_AT_NEW( jfields.AudioManager.STREAM_MUSIC,
-                                       i_rate, i_channel_config, i_format,
-                                       i_size, jfields.AudioTrack.MODE_STREAM );
+    jint session_id = var_InheritInteger( p_aout, "audiotrack-session-id" );
+
+    jobject p_audiotrack;
+    if( jfields.AudioTrack.has_ctor_21 )
+        p_audiotrack = AudioTrack_New21( env, p_aout, i_rate, i_channel_config,
+                                         i_format, i_size, session_id );
+    else
+        p_audiotrack = AudioTrack_NewLegacy( env, p_aout, i_rate,
+                                             i_channel_config, i_format, i_size,
+                                             session_id );
     if( CHECK_AT_EXCEPTION( "AudioTrack<init>" ) || !p_audiotrack )
     {
-        msg_Warn( p_aout, "AudioTrack Init failed" ) ;
+        msg_Warn( p_aout, "AudioTrack Init failed" );
         return -1;
     }
     if( JNI_CALL_INT( p_audiotrack, jfields.AudioTrack.getState )
@@ -1239,8 +1396,7 @@ Start( audio_output_t *p_aout, audio_sample_format_t *restrict p_fmt )
     else
     {
         /* 2 seconds of buffering */
-        p_sys->circular.i_size = p_sys->circular.i_size * AOUT_MAX_PREPARE_TIME
-                               / CLOCK_FREQ;
+        p_sys->circular.i_size = samples_from_vlc_tick(AOUT_MAX_PREPARE_TIME, p_sys->circular.i_size);
     }
 
     /* Allocate circular buffer */
@@ -1623,8 +1779,8 @@ AudioTrack_Thread( void *p_data )
     audio_output_t *p_aout = p_data;
     aout_sys_t *p_sys = p_aout->sys;
     JNIEnv *env = GET_ENV();
-    mtime_t i_play_deadline = 0;
-    mtime_t i_last_time_blocked = 0;
+    vlc_tick_t i_play_deadline = 0;
+    vlc_tick_t i_last_time_blocked = 0;
 
     if( !env )
         return NULL;
@@ -1639,7 +1795,7 @@ AudioTrack_Thread( void *p_data )
         vlc_mutex_lock( &p_sys->lock );
 
         /* Wait for free space in Audiotrack internal buffer */
-        if( i_play_deadline != 0 && mdate() < i_play_deadline )
+        if( i_play_deadline != 0 && vlc_tick_now() < i_play_deadline )
         {
             /* Don't wake up the thread when there is new data since we are
              * waiting for more space */
@@ -1677,7 +1833,7 @@ AudioTrack_Thread( void *p_data )
          * Android 4.4.2 if we send frames too quickly. To fix this issue,
          * force the writing of the buffer after a certain delay. */
         if( i_last_time_blocked != 0 )
-            b_forced = mdate() - i_last_time_blocked >
+            b_forced = vlc_tick_now() - i_last_time_blocked >
                        FRAMES_TO_US( p_sys->i_max_audiotrack_samples ) * 2;
         else
             b_forced = false;
@@ -1695,11 +1851,11 @@ AudioTrack_Thread( void *p_data )
                 if( i_ret != 0 )
                     i_last_time_blocked = 0;
                 else if( i_last_time_blocked == 0 )
-                    i_last_time_blocked = mdate();
+                    i_last_time_blocked = vlc_tick_now();
             }
 
             if( i_ret == 0 )
-                i_play_deadline = mdate() + __MAX( 10000, FRAMES_TO_US(
+                i_play_deadline = vlc_tick_now() + __MAX( 10000, FRAMES_TO_US(
                                   p_sys->i_max_audiotrack_samples / 5 ) );
             else
                 p_sys->circular.i_read += i_ret;
@@ -1719,7 +1875,7 @@ AudioTrack_Thread( void *p_data )
 }
 
 static void
-Play( audio_output_t *p_aout, block_t *p_buffer )
+Play( audio_output_t *p_aout, block_t *p_buffer, vlc_tick_t i_date )
 {
     JNIEnv *env = NULL;
     size_t i_buffer_offset = 0;
@@ -1795,10 +1951,11 @@ Play( audio_output_t *p_aout, block_t *p_buffer )
 bailout:
     vlc_mutex_unlock( &p_sys->lock );
     block_Release( p_buffer );
+    (void) i_date;
 }
 
 static void
-Pause( audio_output_t *p_aout, bool b_pause, mtime_t i_date )
+Pause( audio_output_t *p_aout, bool b_pause, vlc_tick_t i_date )
 {
     aout_sys_t *p_sys = p_aout->sys;
     JNIEnv *env;

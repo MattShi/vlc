@@ -131,8 +131,7 @@ PrefsDialog::PrefsDialog( QWidget *parent, intf_thread_t *_p_intf )
 
     for( int i = 0; i < SPrefsMax ; i++ ) simple_panels[i] = NULL;
 
-    if( var_InheritBool( p_intf, "qt-advanced-pref" )
-     || var_InheritBool( p_intf, "advanced" ) )
+    if( var_InheritBool( p_intf, "qt-advanced-pref" ) )
         setAdvanced();
     else
         setSimple();
@@ -340,7 +339,7 @@ void PrefsDialog::reset()
 
     if( ret == QMessageBox::Ok )
     {
-        config_ResetAll( p_intf );
+        config_ResetAll();
         config_SaveConfigFile( p_intf );
         getSettings()->clear();
 

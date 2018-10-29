@@ -32,13 +32,16 @@
 
 #include <vlc_config_cat.h>
 #include <vlc_configuration.h>
+#include <vlc_aout.h>
 
 #include <QString>
 #include <QFont>
 #include <QToolButton>
+#include <QButtonGroup>
 #include <QSignalMapper>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QHeaderView>
 
 #include <QStyleFactory>
 #include <QSettings>
@@ -125,10 +128,18 @@ static struct {
     { "wa",    "Walon" }
 };
 
-static int getDefaultAudioVolume(vlc_object_t *obj, const char *aout)
+static int getDefaultAudioVolume(const char *aout)
 {
     if (!strcmp(aout, "") || !strcmp(aout, "any"))
+#ifdef _WIN32
+        /* All Windows aouts, that can be selected automatically, handle volume
+         * saving. In case of automatic mode, we'll save the last volume for
+         * every modules. Therefore, all volumes variable we be the same and we
+         * can use the first one (mmdevice). */
+        return config_GetFloat("mmdevice-volume") * 100.f + .5f;
+#else
         return -1;
+#endif
     else
     /* Note: For hysterical raisins, this is sorted by decreasing priority
      * order (then alphabetical order). */
@@ -137,42 +148,36 @@ static int getDefaultAudioVolume(vlc_object_t *obj, const char *aout)
     else
 #ifdef __linux__
     if (!strcmp(aout, "alsa") && module_exists("alsa"))
-        return cbrtf(config_GetFloat(obj, "alsa-gain")) * 100.f + .5f;
+        return cbrtf(config_GetFloat("alsa-gain")) * 100.f + .5f;
     else
 #endif
 #ifdef _WIN32
     if (!strcmp(aout, "mmdevice"))
-        return -1;
+        return config_GetFloat("mmdevice-volume") * 100.f + .5f;
     else
 #endif
-    if (!strcmp(aout, "sndio"))
-        return -1;
-    else
 #ifdef __APPLE__
     if (!strcmp(aout, "auhal") && module_exists("auhal"))
-        return (config_GetFloat(obj, "auhal-volume") * 100.f + .5f)
+        return (config_GetFloat("auhal-volume") * 100.f + .5f)
                  / AOUT_VOLUME_DEFAULT;
     else
 #endif
 #ifdef _WIN32
     if (!strcmp(aout, "directsound") && module_exists("directsound"))
-        return config_GetFloat(obj, "directx-volume") * 100.f + .5f;
+        return config_GetFloat("directx-volume") * 100.f + .5f;
     else
 #endif
     if (!strcmp(aout, "jack"))
-        return cbrtf(config_GetFloat(obj, "jack-gain")) * 100.f + 0.5f;
+        return cbrtf(config_GetFloat("jack-gain")) * 100.f + 0.5f;
     else
 #ifdef __OS2__
     if (!strcmp(aout, "kai"))
-        return cbrtf(config_GetFloat(obj, "kai-gain")) * 100.f + .5f;
+        return cbrtf(config_GetFloat("kai-gain")) * 100.f + .5f;
     else
 #endif
-    if (!strcmp(aout, "oss"))
-        return -1;
-    else
 #ifdef _WIN32
     if (!strcmp(aout, "waveout"))
-        return config_GetFloat(obj, "waveout-volume") * 100.f + .5f;
+        return config_GetFloat("waveout-volume") * 100.f + .5f;
     else
 #endif
         return -1;
@@ -490,6 +495,12 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
 #endif
 
 #ifdef _WIN32
+            audioControl( MMDevice );
+            optionWidgets["mmdeviceL" ] = MMDeviceLabel;
+            optionWidgets["mmdeviceW" ] = MMDeviceDevice;
+            CONFIG_GENERIC_NO_UI( "mmdevice-audio-device", StringList,
+                                  MMDeviceLabel, MMDeviceDevice );
+
             CONFIG_GENERIC( "mmdevice-passthrough", IntegerList,
                             ui.mmdevicePassthroughLabel, mmdevicePassthroughBox );
             optionWidgets["mmdevicePassthroughL"] = ui.mmdevicePassthroughLabel;
@@ -504,7 +515,7 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
 #undef audioControl
 #undef audioCommon
 
-            int i_max_volume = config_GetInt( p_intf, "qt-max-volume" );
+            int i_max_volume = config_GetInt( "qt-max-volume" );
 
             /* Audio Options */
             ui.volumeValue->setMaximum( i_max_volume );
@@ -559,7 +570,7 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
                 CONFIG_GENERIC( "lastfm-password", String, ui.lastfm_pass_label,
                         lastfm_pass_edit );
 
-                if( config_ExistIntf( VLC_OBJECT( p_intf ), "audioscrobbler" ) )
+                if( config_ExistIntf( "audioscrobbler" ) )
                     ui.lastfm->setChecked( true );
                 else
                     ui.lastfm->setChecked( false );
@@ -581,7 +592,7 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
             CONNECT( ui.volNormBox, toggled( bool ), ui.volNormSpin,
                      setEnabled( bool ) );
 
-            char* psz = config_GetPsz( p_intf, "audio-filter" );
+            char* psz = config_GetPsz( "audio-filter" );
             qs_filter = qfu( psz ).split( ':', QString::SkipEmptyParts );
             free( psz );
 
@@ -604,9 +615,9 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
                          "for DVD, VCD, and CDDA are set.\n"
                          "You can define a unique one or configure them \n"
                          "individually in the advanced preferences." ) );
-                char *psz_dvddiscpath = config_GetPsz( p_intf, "dvd" );
-                char *psz_vcddiscpath = config_GetPsz( p_intf, "vcd" );
-                char *psz_cddadiscpath = config_GetPsz( p_intf, "cd-audio" );
+                char *psz_dvddiscpath = config_GetPsz( "dvd" );
+                char *psz_vcddiscpath = config_GetPsz( "vcd" );
+                char *psz_cddadiscpath = config_GetPsz( "cd-audio" );
                 if( psz_dvddiscpath && psz_vcddiscpath && psz_cddadiscpath )
                 if( !strcmp( psz_cddadiscpath, psz_dvddiscpath ) &&
                     !strcmp( psz_dvddiscpath, psz_vcddiscpath ) )
@@ -677,10 +688,10 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
 
 #define TestCaC( name, factor ) \
     b_cache_equal =  b_cache_equal && \
-     ( i_cache * factor == config_GetInt( p_intf, name ) );
+     ( i_cache * factor == config_GetInt( name ) );
             /* Select the accurate value of the ComboBox */
             bool b_cache_equal = true;
-            int i_cache = config_GetInt( p_intf, "file-caching" );
+            int i_cache = config_GetInt( "file-caching" );
 
             TestCaC( "network-caching", 10/3 );
             TestCaC( "disc-caching", 1);
@@ -732,7 +743,7 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
 #endif
 
             /* interface */
-            char *psz_intf = config_GetPsz( p_intf, "intf" );
+            char *psz_intf = config_GetPsz( "intf" );
             if( psz_intf )
             {
                 if( strstr( psz_intf, "skin" ) )
@@ -864,8 +875,8 @@ SPrefsPanel::SPrefsPanel( intf_thread_t *_p_intf, QWidget *_parent,
 
             CONFIG_GENERIC_NO_BOOL( "sub-margin", Integer, ui.subsPosLabel, subsPosition );
 
-            ui.shadowCheck->setChecked( config_GetInt( p_intf, "freetype-shadow-opacity" ) > 0 );
-            ui.backgroundCheck->setChecked( config_GetInt( p_intf, "freetype-background-opacity" ) > 0 );
+            ui.shadowCheck->setChecked( config_GetInt( "freetype-shadow-opacity" ) > 0 );
+            ui.backgroundCheck->setChecked( config_GetInt( "freetype-background-opacity" ) > 0 );
             optionWidgets["shadowCB"] = ui.shadowCheck;
             optionWidgets["backgroundCB"] = ui.backgroundCheck;
 
@@ -961,6 +972,8 @@ void SPrefsPanel::updateAudioOptions( int number)
     const bool mmDeviceEnabled = value == "mmdevice" || value == "any";
     optionWidgets["mmdevicePassthroughL"]->setVisible( mmDeviceEnabled );
     optionWidgets["mmdevicePassthroughB"]->setVisible( mmDeviceEnabled );
+    optionWidgets["mmdeviceW"]->setVisible( mmDeviceEnabled );
+    optionWidgets["mmdeviceL"]->setVisible( mmDeviceEnabled );
 
     optionWidgets["directxW"]->setVisible( ( value == "directsound" ) );
     optionWidgets["directxL"]->setVisible( ( value == "directsound" ) );
@@ -986,11 +999,11 @@ void SPrefsPanel::updateAudioOptions( int number)
     optionWidgets["spdifChB"]->setVisible( ( value == "alsa" || value == "oss" || value == "auhal" ||
                                            value == "directsound" || value == "waveout" ) );
 
-    int volume = getDefaultAudioVolume(VLC_OBJECT(p_intf), qtu(value));
+    int volume = getDefaultAudioVolume(qtu(value));
     bool save = true;
 
     if (volume >= 0)
-        save = config_GetInt(VLC_OBJECT(p_intf), "volume-save");
+        save = config_GetInt("volume-save");
 
     QCheckBox *resetVolumeCheckBox =
         qobject_cast<QCheckBox *>(optionWidgets["resetVolumeCheckbox"]);
@@ -1037,12 +1050,12 @@ void SPrefsPanel::apply()
             qobject_cast<QComboBox *>(optionWidgets["inputLE"])->currentText().toUtf8();
         if( devicepath.size() > 0 )
         {
-            config_PutPsz( p_intf, "dvd", devicepath );
-            config_PutPsz( p_intf, "vcd", devicepath );
-            config_PutPsz( p_intf, "cd-audio", devicepath );
+            config_PutPsz( "dvd", devicepath );
+            config_PutPsz( "vcd", devicepath );
+            config_PutPsz( "cd-audio", devicepath );
         }
 
-#define CaC( name, factor ) config_PutInt( p_intf, name, i_comboValue * factor )
+#define CaC( name, factor ) config_PutInt( name, i_comboValue * factor )
         /* Caching */
         QComboBox *cachingCombo = qobject_cast<QComboBox *>(optionWidgets["cachingCoB"]);
         int i_comboValue = cachingCombo->itemData( cachingCombo->currentIndex() ).toInt();
@@ -1061,10 +1074,10 @@ void SPrefsPanel::apply()
     case SPrefsInterface:
     {
         if( qobject_cast<QRadioButton *>(optionWidgets["skinRB"])->isChecked() )
-            config_PutPsz( p_intf, "intf", "skins2,any" );
+            config_PutPsz( "intf", "skins2,any" );
         else
         //if( qobject_cast<QRadioButton *>(optionWidgets[qtRB])->isChecked() )
-            config_PutPsz( p_intf, "intf", "" );
+            config_PutPsz( "intf", "" );
         if( qobject_cast<QComboBox *>(optionWidgets["styleCB"]) )
             getSettings()->setValue( "MainWindow/QtStyle",
                 qobject_cast<QComboBox *>(optionWidgets["styleCB"])->currentText() );
@@ -1077,7 +1090,7 @@ void SPrefsPanel::apply()
     case SPrefsVideo:
     {
         int i_fullscreenScreen =  qobject_cast<QComboBox *>(optionWidgets["fullscreenScreenB"])->currentData().toInt();
-        config_PutInt( p_intf, "qt-fullscreen-screennumber", i_fullscreenScreen );
+        config_PutInt( "qt-fullscreen-screennumber", i_fullscreenScreen );
         break;
     }
 
@@ -1090,14 +1103,14 @@ void SPrefsPanel::apply()
         if( !b_checked && qs_filter.contains( "normvol" ) )
             qs_filter.removeAll( "normvol" );
 
-        config_PutPsz( p_intf, "audio-filter", qtu( qs_filter.join( ":" ) ) );
+        config_PutPsz( "audio-filter", qtu( qs_filter.join( ":" ) ) );
 
         /* Default volume */
         int i_volume =
             qobject_cast<QSlider *>(optionWidgets["defaultVolume"])->value();
         bool b_reset_volume =
             qobject_cast<QCheckBox *>(optionWidgets["resetVolumeCheckbox"])->isChecked();
-        char *psz_aout = config_GetPsz( p_intf, "aout" );
+        char *psz_aout = config_GetPsz( "aout" );
 
         float f_gain = powf( i_volume / 100.f, 3 );
 
@@ -1107,47 +1120,49 @@ void SPrefsPanel::apply()
         //FIXME this is moot
 #if defined( _WIN32 )
         VLC_UNUSED( f_gain );
+        if( save_vol_aout( "mmdevice" ) )
+            config_PutFloat( "mmdevice-volume", i_volume / 100.f );
         if( save_vol_aout( "directsound" ) )
-            config_PutFloat( p_intf, "directx-volume", i_volume / 100.f );
+            config_PutFloat( "directx-volume", i_volume / 100.f );
         if( save_vol_aout( "waveout" ) )
-            config_PutFloat( p_intf, "waveout-volume", i_volume / 100.f );
+            config_PutFloat( "waveout-volume", i_volume / 100.f );
 #elif defined( Q_OS_MAC )
         VLC_UNUSED( f_gain );
         if( save_vol_aout( "auhal" ) )
-            config_PutFloat( p_intf, "auhal-volume", i_volume / 100.f
+            config_PutFloat( "auhal-volume", i_volume / 100.f
                     * AOUT_VOLUME_DEFAULT );
 #elif defined( __OS2__ )
         if( save_vol_aout( "kai" ) )
-            config_PutFloat( p_intf, "kai-gain",  f_gain );
+            config_PutFloat( "kai-gain",  f_gain );
 #else
         if( save_vol_aout( "alsa" ) )
-            config_PutFloat( p_intf, "alsa-gain", f_gain );
+            config_PutFloat( "alsa-gain", f_gain );
         if( save_vol_aout( "jack" ) )
-            config_PutFloat( p_intf, "jack-gain", f_gain );
+            config_PutFloat( "jack-gain", f_gain );
 #endif
 #undef save_vol_aout
         free( psz_aout );
 
-        config_PutInt( p_intf, "volume-save", !b_reset_volume );
+        config_PutInt( "volume-save", !b_reset_volume );
 
         break;
     }
     case SPrefsSubtitles:
     {
         bool b_checked = qobject_cast<QCheckBox *>(optionWidgets["shadowCB"])->isChecked();
-        if( b_checked && config_GetInt( p_intf, "freetype-shadow-opacity" ) == 0 ) {
-            config_PutInt( p_intf, "freetype-shadow-opacity", 128 );
+        if( b_checked && config_GetInt( "freetype-shadow-opacity" ) == 0 ) {
+            config_PutInt( "freetype-shadow-opacity", 128 );
         }
         else if (!b_checked ) {
-            config_PutInt( p_intf, "freetype-shadow-opacity", 0 );
+            config_PutInt( "freetype-shadow-opacity", 0 );
         }
 
         b_checked = qobject_cast<QCheckBox *>(optionWidgets["backgroundCB"])->isChecked();
-        if( b_checked && config_GetInt( p_intf, "freetype-background-opacity" ) == 0 ) {
-            config_PutInt( p_intf, "freetype-background-opacity", 128 );
+        if( b_checked && config_GetInt( "freetype-background-opacity" ) == 0 ) {
+            config_PutInt( "freetype-background-opacity", 128 );
         }
         else if (!b_checked ) {
-            config_PutInt( p_intf, "freetype-background-opacity", 0 );
+            config_PutInt( "freetype-background-opacity", 0 );
         }
 
     }
@@ -1160,9 +1175,9 @@ void SPrefsPanel::clean()
 void SPrefsPanel::lastfm_Changed( int i_state )
 {
     if( i_state == Qt::Checked )
-        config_AddIntf( VLC_OBJECT( p_intf ), "audioscrobbler" );
+        config_AddIntf( "audioscrobbler" );
     else if( i_state == Qt::Unchecked )
-        config_RemoveIntf( VLC_OBJECT( p_intf ), "audioscrobbler" );
+        config_RemoveIntf( "audioscrobbler" );
 }
 
 void SPrefsPanel::changeStyle( QString s_style )

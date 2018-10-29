@@ -36,6 +36,8 @@
 #include <vlc_codec.h>
 #include <vlc_bits.h>
 
+#include "../demux/mpeg/timestamps.h"
+
 /*****************************************************************************
  * Module descriptor.
  *****************************************************************************/
@@ -71,15 +73,13 @@ static void SVCDSubRenderImage( decoder_t *, block_t *, subpicture_region_t * );
 
 #define GETINT16(p) GetWBE(p)  ; p +=2;
 
-#define GETINT32(p) GetDWBE(p) ; p += 4;
-
 typedef enum  {
   SUBTITLE_BLOCK_EMPTY    = 0,
   SUBTITLE_BLOCK_PARTIAL  = 1,
   SUBTITLE_BLOCK_COMPLETE = 2
 } packet_state_t;
 
-struct decoder_sys_t
+typedef struct
 {
   packet_state_t i_state; /* data-gathering state for this subtitle */
 
@@ -98,7 +98,7 @@ struct decoder_sys_t
   size_t metadata_offset;          /* offset to data describing the image */
   size_t metadata_length;          /* length of metadata */
 
-  mtime_t i_duration;   /* how long to display the image, 0 stands
+  vlc_tick_t i_duration;   /* how long to display the image, 0 stands
                            for "until next subtitle" */
 
   uint16_t i_x_start, i_y_start; /* position of top leftmost pixel of
@@ -106,12 +106,9 @@ struct decoder_sys_t
   uint16_t i_width, i_height;    /* dimensions in pixels of image */
 
   uint8_t p_palette[4][4];       /* Palette of colors used in subtitle */
-};
+} decoder_sys_t;
 
-/*****************************************************************************
- * DecoderOpen: open/initialize the svcdsub decoder.
- *****************************************************************************/
-static int DecoderOpen( vlc_object_t *p_this )
+static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
 {
     decoder_t     *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -131,10 +128,20 @@ static int DecoderOpen( vlc_object_t *p_this )
 
     p_dec->fmt_out.i_codec = VLC_CODEC_OGT;
 
-    p_dec->pf_decode    = Decode;
-    p_dec->pf_packetize = Packetize;
+    if( b_packetizer )
+        p_dec->pf_packetize = Packetize;
+    else
+        p_dec->pf_decode    = Decode;
 
     return VLC_SUCCESS;
+}
+
+/*****************************************************************************
+ * DecoderOpen: open/initialize the svcdsub decoder.
+ *****************************************************************************/
+static int DecoderOpen( vlc_object_t *p_this )
+{
+    return OpenCommon( p_this, false );
 }
 
 /*****************************************************************************
@@ -142,9 +149,7 @@ static int DecoderOpen( vlc_object_t *p_this )
  *****************************************************************************/
 static int PacketizerOpen( vlc_object_t *p_this )
 {
-    if( DecoderOpen( p_this ) != VLC_SUCCESS ) return VLC_EGENERIC;
-
-    return VLC_SUCCESS;
+    return OpenCommon( p_this, true );
 }
 
 /*****************************************************************************
@@ -196,7 +201,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
     if( !(p_spu = Reassemble( p_dec, p_block )) ) return NULL;
 
     p_spu->i_dts = p_spu->i_pts;
-    p_spu->i_length = 0;
+    p_spu->i_length = VLC_TICK_INVALID;
 
     return p_spu;
 }
@@ -370,9 +375,8 @@ static void ParseHeader( decoder_t *p_dec, block_t *p_block )
     // Skip over unused value
     p++;
 
-    if( i_options & 0x08 ) { p_sys->i_duration = GETINT32(p); }
+    if( i_options & 0x08 ) { p_sys->i_duration = FROM_SCALE_NZ(GetDWBE(p)); p += 4; }
     else p_sys->i_duration = 0; /* Ephemer subtitle */
-    p_sys->i_duration *= 100 / 9;
 
     p_sys->i_x_start = GETINT16(p);
     p_sys->i_y_start = GETINT16(p);

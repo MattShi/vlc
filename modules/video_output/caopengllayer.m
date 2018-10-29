@@ -60,8 +60,9 @@ vlc_module_begin()
 vlc_module_end()
 
 static picture_pool_t *Pool (vout_display_t *vd, unsigned requested_count);
-static void PictureRender   (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture);
-static void PictureDisplay  (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture);
+static void PictureRender   (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+                             vlc_tick_t date);
+static void PictureDisplay  (vout_display_t *vd, picture_t *pic);
 static int Control          (vout_display_t *vd, int query, va_list ap);
 
 static void *OurGetProcAddress (vlc_gl_t *gl, const char *name);
@@ -121,9 +122,7 @@ static int Open (vlc_object_t *p_this)
 
     @autoreleasepool {
         id container = var_CreateGetAddress(vd, "drawable-nsobject");
-        if (container)
-            vout_display_DeleteWindow(vd, NULL);
-        else {
+        if (!container) {
             sys->embed = vout_display_NewWindow(vd, VOUT_WINDOW_TYPE_NSOBJECT);
             if (sys->embed)
                 container = sys->embed->handle.nsobject;
@@ -183,7 +182,6 @@ static int Open (vlc_object_t *p_this)
         glsys->cgLayer = sys->cgLayer;
 
         const vlc_fourcc_t *subpicture_chromas;
-        video_format_t fmt = vd->fmt;
         if (!OpenglLock(sys->gl)) {
             sys->vgl = vout_display_opengl_New(&vd->fmt, &subpicture_chromas,
                                                sys->gl, &vd->cfg->viewpoint);
@@ -248,9 +246,6 @@ static void Close (vlc_object_t *p_this)
     if (sys->container)
         [sys->container release];
 
-    if (sys->embed)
-        vout_display_DeleteWindow(vd, sys->embed);
-
     if (sys->vgl != NULL && !OpenglLock(sys->gl)) {
         vout_display_opengl_Delete(sys->vgl);
         OpenglUnlock(sys->gl);
@@ -281,8 +276,10 @@ static picture_pool_t *Pool (vout_display_t *vd, unsigned count)
     return sys->pool;
 }
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+                           vlc_tick_t date)
 {
+    VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
 
     if (pic == NULL) {
@@ -298,9 +295,10 @@ static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *sub
     }
 }
 
-static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureDisplay (vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *sys = vd->sys;
+    VLC_UNUSED(pic);
 
     @synchronized (sys->cgLayer) {
         sys->b_frame_available = YES;
@@ -311,11 +309,6 @@ static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *su
         [sys->cgLayer display];
         [CATransaction flush];
     }
-
-    picture_Release(pic);
-
-    if (subpicture)
-        subpicture_Delete(subpicture);
 }
 
 static int Control (vout_display_t *vd, int query, va_list ap)

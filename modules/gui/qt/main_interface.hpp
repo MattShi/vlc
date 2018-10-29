@@ -99,8 +99,7 @@ public:
     StandardPLPanel* getPlaylistView();
 
 protected:
-    void dropEventPlay( QDropEvent* event, bool b_play ) { dropEventPlay(event, b_play, true); }
-    void dropEventPlay( QDropEvent *, bool, bool );
+    void dropEventPlay( QDropEvent* event, bool b_play );
     void changeEvent( QEvent * ) Q_DECL_OVERRIDE;
     void dropEvent( QDropEvent *) Q_DECL_OVERRIDE;
     void dragEnterEvent( QDragEnterEvent * ) Q_DECL_OVERRIDE;
@@ -126,9 +125,9 @@ protected:
     void handleSystray();
 
     /* Central StackWidget Management */
-    void showTab( QWidget *);
+    void showTab( QWidget *, bool video_closing = false );
     void showVideo();
-    void restoreStackOldWidget();
+    void restoreStackOldWidget( bool video_closing = false );
 
     /* */
     void displayNormalView();
@@ -158,7 +157,7 @@ protected:
     /* resume panel */
     QWidget             *resumePanel;
     QTimer              *resumeTimer;
-    int64_t             i_resumeTime;
+    vlc_tick_t          i_resumeTime;
 
     /* Status Bar */
     QLabel              *nameLabel;
@@ -169,6 +168,8 @@ protected:
     QPoint              lastWinPosition;
     QSize               lastWinSize;  /// To restore the same window size when leaving fullscreen
     QScreen             *lastWinScreen;
+
+    QSize               pendingResize; // to be applied when fullscreen is disabled
 
     QMap<QWidget *, QSize> stackWidgetsSizes;
 
@@ -240,7 +241,12 @@ protected slots:
 
     void resizeStack( int w, int h )
     {
-        if( !isFullScreen() && !isMaximized() && !b_isWindowTiled )
+        if( isFullScreen() )
+        {
+            /* postpone resize, will be applied once fullscreen is disabled */
+            pendingResize = QSize( w, h );
+        }
+        else if( !isMaximized() && !b_isWindowTiled )
         {
             if( b_minimalView )
                 resizeWindow( w, h ); /* Oh yes, it shouldn't
@@ -255,13 +261,12 @@ protected slots:
     void setVideoSize( unsigned int, unsigned int );
     void videoSizeChanged( int, int );
     virtual void setVideoFullScreen( bool );
-    void setHideMouse( bool );
     void setVideoOnTop( bool );
     void setBoss();
     void setRaise();
     void voutReleaseMouseEvents();
 
-    void showResumePanel( int64_t);
+    void showResumePanel( vlc_tick_t);
     void hideResumePanel();
     void resumePlayback();
     void onInputChanged( bool );
@@ -272,7 +277,6 @@ signals:
     void askReleaseVideo( );
     void askVideoToResize( unsigned int, unsigned int );
     void askVideoSetFullScreen( bool );
-    void askHideMouse( bool );
     void askVideoOnTop( bool );
     void minimalViewToggled( bool );
     void fullscreenInterfaceToggled( bool );

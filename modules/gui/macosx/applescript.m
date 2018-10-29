@@ -68,9 +68,6 @@
     NSString *o_command = [[self commandDescription] commandName];
     NSString *o_parameter = [self directParameter];
 
-    intf_thread_t * p_intf = getIntf();
-    playlist_t * p_playlist = pl_Get(p_intf);
-
     if ([o_command isEqualToString:@"play"])
         [[VLCCoreInteraction sharedInstance] playOrPause];
     else if ([o_command isEqualToString:@"stop"])
@@ -188,8 +185,7 @@
     if (!p_input)
         return NO;
 
-    input_state_e i_state = ERROR_S;
-    input_Control(p_input, INPUT_GET_STATE, &i_state);
+    input_state_e i_state = var_GetInteger(p_input, "state");
     vlc_object_release(p_input);
 
     return ((i_state == OPENING_S) || (i_state == PLAYING_S));
@@ -203,39 +199,39 @@
     [[VLCCoreInteraction sharedInstance] setVolume:(int)i_audioVolume];
 }
 
-- (int) audioDesync {
+- (long long) audioDesync {
     input_thread_t * p_input = pl_CurrentInput(getIntf());
-    int i_delay = -1;
+    vlc_tick_t i_delay;
 
-    if(!p_input)
-        return i_delay;
+    if (!p_input)
+        return -1;
 
     i_delay = var_GetInteger(p_input, "audio-delay");
     vlc_object_release(p_input);
 
-    return (i_delay / 1000);
+    return MS_FROM_VLC_TICK( i_delay );
 }
 
-- (void) setAudioDesync:(int)i_audioDesync {
+- (void) setAudioDesync:(long long)i_audioDesync {
     input_thread_t * p_input = pl_CurrentInput(getIntf());
-    if(!p_input)
+    if (!p_input)
         return;
 
-    var_SetInteger(p_input, "audio-delay", i_audioDesync * 1000);
+    var_SetInteger(p_input, "audio-delay", VLC_TICK_FROM_MS( i_audioDesync ));
     vlc_object_release(p_input);
 }
 
 - (int) currentTime {
     input_thread_t * p_input = pl_CurrentInput(getIntf());
-    int64_t i_currentTime = -1;
+    vlc_tick_t i_currentTime;
 
     if (!p_input)
-        return i_currentTime;
+        return -1;
 
-    input_Control(p_input, INPUT_GET_TIME, &i_currentTime);
+    i_currentTime = var_GetInteger(p_input, "time");
     vlc_object_release(p_input);
 
-    return (int)(i_currentTime / 1000000);
+    return (int)SEC_FROM_VLC_TICK(i_currentTime);
 }
 
 - (void) setCurrentTime:(int)i_currentTime {
@@ -246,12 +242,13 @@
         if (!p_input)
             return;
 
-        input_Control(p_input, INPUT_SET_TIME, (int64_t)(i64_value * 1000000));
+        input_SetTime(p_input, vlc_tick_from_sec(i64_value),
+                      var_GetBool(p_input, "input-fast-seek"));
         vlc_object_release(p_input);
     }
 }
 
-- (int) durationOfCurrentItem {
+- (NSInteger) durationOfCurrentItem {
     return [[VLCCoreInteraction sharedInstance] durationOfCurrentPlaylistItem];
 }
 
@@ -269,7 +266,7 @@
     if (!p_input_thread)
         return NO;
 
-    int i_current_title = var_GetInteger(p_input_thread, "title");
+    int i_current_title = (int)var_GetInteger(p_input_thread, "title");
 
     input_title_t **p_input_title;
     int count;

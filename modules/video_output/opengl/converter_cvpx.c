@@ -123,7 +123,7 @@ tc_cvpx_update(const opengl_tex_converter_t *tc, GLuint *textures,
                                    surface, i);
         if (err != kCGLNoError)
         {
-            msg_Err(tc->gl, "CGLTexImageIOSurface2D error: %d: %s\n", i,
+            msg_Err(tc->gl, "CGLTexImageIOSurface2D error: %u: %s", i,
                     CGLErrorString(err));
             return VLC_EGENERIC;
         }
@@ -182,7 +182,7 @@ Open(vlc_object_t *obj)
         CVEAGLContext eagl_ctx = var_InheritAddress(tc->gl, "ios-eaglcontext");
         if (!eagl_ctx)
         {
-            msg_Err(tc->gl, "can't find ios-eaglcontext\n");
+            msg_Err(tc->gl, "can't find ios-eaglcontext");
             free(priv);
             return VLC_EGENERIC;
         }
@@ -202,7 +202,7 @@ Open(vlc_object_t *obj)
         priv->gl_ctx = var_InheritAddress(tc->gl, "macosx-glcontext");
         if (!priv->gl_ctx)
         {
-            msg_Err(tc->gl, "can't find macosx-glcontext\n");
+            msg_Err(tc->gl, "can't find macosx-glcontext");
             free(priv);
             return VLC_EGENERIC;
         }
@@ -232,7 +232,6 @@ Open(vlc_object_t *obj)
             fragment_shader =
                 opengl_fragment_shader_init(tc, tex_target, VLC_CODEC_NV12,
                                             tc->fmt.space);
-            tc->texs[1].h = (vlc_rational_t) { 1, 2 };
             break;
         }
         case VLC_CODEC_CVPX_P010:
@@ -240,7 +239,6 @@ Open(vlc_object_t *obj)
             fragment_shader =
                 opengl_fragment_shader_init(tc, tex_target, VLC_CODEC_P010,
                                             tc->fmt.space);
-            tc->texs[1].h = (vlc_rational_t) { 1, 2 };
             break;
         }
         case VLC_CODEC_CVPX_I420:

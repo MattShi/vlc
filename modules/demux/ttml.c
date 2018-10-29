@@ -41,12 +41,12 @@
 
 //#define TTML_DEMUX_DEBUG
 
-struct demux_sys_t
+typedef struct
 {
     xml_t*          p_xml;
     xml_reader_t*   p_reader;
     es_out_id_t*    p_es;
-    int64_t         i_next_demux_time;
+    vlc_tick_t      i_next_demux_time;
     bool            b_slave;
     bool            b_first_time;
 
@@ -65,7 +65,7 @@ struct demux_sys_t
         size_t   i_count;
         size_t   i_current;
     } times;
-};
+} demux_sys_t;
 
 static char *tt_genTiming( tt_time_t t )
 {
@@ -207,7 +207,7 @@ static void tt_node_ToText( struct vlc_memstream *p_stream, const tt_basenode_t 
 static int Control( demux_t* p_demux, int i_query, va_list args )
 {
     demux_sys_t *p_sys = p_demux->p_sys;
-    int64_t *pi64, i64;
+    vlc_tick_t i64;
     double *pf, f;
     bool b;
 
@@ -217,14 +217,12 @@ static int Control( demux_t* p_demux, int i_query, va_list args )
             *va_arg( args, bool * ) = true;
             return VLC_SUCCESS;
         case DEMUX_GET_TIME:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = p_sys->i_next_demux_time;
+            *va_arg( args, vlc_tick_t * ) = p_sys->i_next_demux_time;
             return VLC_SUCCESS;
         case DEMUX_SET_TIME:
-            i64 = va_arg( args, int64_t );
             if( p_sys->times.i_count )
             {
-                tt_time_t t = tt_time_Create( i64 - VLC_TS_0 );
+                tt_time_t t = tt_time_Create( va_arg( args, vlc_tick_t ) - VLC_TICK_0 );
                 size_t i_index = tt_timings_FindLowerIndex( p_sys->times.p_array,
                                                             p_sys->times.i_count, t, &b );
                 p_sys->times.i_current = i_index;
@@ -233,17 +231,15 @@ static int Control( demux_t* p_demux, int i_query, va_list args )
             }
             break;
         case DEMUX_SET_NEXT_DEMUX_TIME:
-            i64 = va_arg( args, int64_t );
-            p_sys->i_next_demux_time = i64;
+            p_sys->i_next_demux_time = va_arg( args, vlc_tick_t );
             p_sys->b_slave = true;
             return VLC_SUCCESS;
         case DEMUX_GET_LENGTH:
-            pi64 = va_arg( args, int64_t * );
             if( p_sys->times.i_count )
             {
                 tt_time_t t = tt_time_Sub( p_sys->times.p_array[p_sys->times.i_count - 1],
                                            p_sys->temporal_extent.begin );
-                *pi64 = tt_time_Convert( &t );
+                *va_arg( args, vlc_tick_t * ) = tt_time_Convert( &t );
                 return VLC_SUCCESS;
             }
             break;
@@ -256,7 +252,7 @@ static int Control( demux_t* p_demux, int i_query, va_list args )
             else if( p_sys->times.i_count > 0 )
             {
                 i64 = tt_time_Convert( &p_sys->times.p_array[p_sys->times.i_count - 1] );
-                *pf = (double) p_sys->i_next_demux_time / (i64 + 0.5);
+                *pf = (double) p_sys->i_next_demux_time / (i64 + VLC_TICK_FROM_MS(500));
             }
             else
             {
@@ -349,14 +345,14 @@ static int Demux( demux_t* p_demux )
     while( p_sys->times.i_current + 1 < p_sys->times.i_count &&
            tt_time_Convert( &p_sys->times.p_array[p_sys->times.i_current] ) <= p_sys->i_next_demux_time )
     {
-        const int64_t i_playbacktime =
+        const vlc_tick_t i_playbacktime =
                 tt_time_Convert( &p_sys->times.p_array[p_sys->times.i_current] );
-        const int64_t i_playbackendtime =
+        const vlc_tick_t i_playbackendtime =
                 tt_time_Convert( &p_sys->times.p_array[p_sys->times.i_current + 1] ) - 1;
 
         if ( !p_sys->b_slave && p_sys->b_first_time )
         {
-            es_out_SetPCR( p_demux->out, VLC_TS_0 + i_playbacktime );
+            es_out_SetPCR( p_demux->out, VLC_TICK_0 + i_playbacktime );
             p_sys->b_first_time = false;
         }
 
@@ -374,7 +370,7 @@ static int Demux( demux_t* p_demux )
             if( p_block )
             {
                 p_block->i_dts =
-                    p_block->i_pts = VLC_TS_0 + i_playbacktime;
+                    p_block->i_pts = VLC_TICK_0 + i_playbacktime;
                 p_block->i_length = i_playbackendtime - i_playbacktime;
 
                 es_out_Send( p_demux->out, p_sys->p_es, p_block );
@@ -386,8 +382,8 @@ static int Demux( demux_t* p_demux )
 
     if ( !p_sys->b_slave )
     {
-        es_out_SetPCR( p_demux->out, VLC_TS_0 + p_sys->i_next_demux_time );
-        p_sys->i_next_demux_time += CLOCK_FREQ / 8;
+        es_out_SetPCR( p_demux->out, VLC_TICK_0 + p_sys->i_next_demux_time );
+        p_sys->i_next_demux_time += VLC_TICK_FROM_MS(125);
     }
 
     if( p_sys->times.i_current + 1 >= p_sys->times.i_count )

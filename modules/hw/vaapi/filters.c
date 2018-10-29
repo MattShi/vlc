@@ -109,13 +109,13 @@ struct  va_filter_desc
     VASurfaceID *       surface_ids;
 };
 
-struct  filter_sys_t
+typedef struct
 {
     struct va_filter_desc       va;
     picture_pool_t *            dest_pics;
     bool                        b_pipeline_fast;
     void *                      p_data;
-};
+} filter_sys_t;
 
 #define DEST_PICS_POOL_SZ       3
 
@@ -253,7 +253,7 @@ struct  deint_data
 
     struct
     {
-        mtime_t date;
+        vlc_tick_t date;
         int     i_nb_fields;
     } meta[METADATA_SIZE];
 
@@ -453,6 +453,8 @@ error:
     if (filter_sys->va.conf != VA_INVALID_ID)
         vlc_vaapi_DestroyConfig(VLC_OBJECT(filter),
                                 filter_sys->va.dpy, filter_sys->va.conf);
+    if (filter_sys->dest_pics)
+        picture_pool_Release(filter_sys->dest_pics);
     if (filter_sys->va.inst)
         vlc_vaapi_FilterReleaseInstance(filter, filter_sys->va.inst);
     free(filter_sys);
@@ -912,10 +914,10 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
     if (p_deint_data->history.num_pics < p_deint_data->history.sz)
         return NULL;
 
-    mtime_t i_field_dur = 0;
+    vlc_tick_t i_field_dur = 0;
     unsigned int i = 0;
     for ( ; i < METADATA_SIZE-1; i ++)
-        if (p_deint_data->meta[i].date > VLC_TS_INVALID)
+        if (p_deint_data->meta[i].date != VLC_TICK_INVALID)
             break;
     if (i < METADATA_SIZE-1) {
         unsigned int i_fields_total = 0;
@@ -924,7 +926,7 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
         i_field_dur = (src->date - p_deint_data->meta[i].date) / i_fields_total;
     }
     else if (fmt->i_frame_rate_base)
-        i_field_dur = CLOCK_FREQ * fmt->i_frame_rate_base / fmt->i_frame_rate;
+        i_field_dur = vlc_tick_from_samples(fmt->i_frame_rate_base, fmt->i_frame_rate);
 
     picture_t *dest[2] = {NULL, NULL};
     for (i = 0; i < 2; ++i)
@@ -943,10 +945,10 @@ DeinterlaceX2(filter_t * filter, picture_t * src)
 
     dest[0]->p_next = dest[1];
     dest[0]->date = cur->date;
-    if (dest[0]->date > VLC_TS_INVALID)
+    if (dest[0]->date != VLC_TICK_INVALID)
         dest[1]->date = dest[0]->date + i_field_dur;
     else
-        dest[1]->date = VLC_TS_INVALID;
+        dest[1]->date = VLC_TICK_INVALID;
 
     return dest[0];
 
@@ -961,7 +963,8 @@ error:
 static void
 Deinterlace_Flush(filter_t *filter)
 {
-    struct deint_data *const    p_deint_data = filter->p_sys->p_data;
+    filter_sys_t *p_sys = filter->p_sys;
+    struct deint_data *const p_deint_data = p_sys->p_data;
 
     while (p_deint_data->history.num_pics)
     {
@@ -972,7 +975,7 @@ Deinterlace_Flush(filter_t *filter)
 
     for (unsigned int i = 0; i < METADATA_SIZE; ++i)
     {
-        p_deint_data->meta[i].date = VLC_TS_INVALID;
+        p_deint_data->meta[i].date = VLC_TICK_INVALID;
         p_deint_data->meta[i].i_nb_fields = 2;
     }
 }
@@ -1142,7 +1145,7 @@ OpenDeinterlace(vlc_object_t * obj)
 
     for (unsigned int i = 0; i < METADATA_SIZE; ++i)
     {
-        p_data->meta[i].date = VLC_TS_INVALID;
+        p_data->meta[i].date = VLC_TICK_INVALID;
         p_data->meta[i].i_nb_fields = 2;
     }
 

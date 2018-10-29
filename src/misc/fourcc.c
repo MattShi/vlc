@@ -377,10 +377,10 @@ static const vlc_fourcc_t p_I444_16B_fallback[] = {
 
 /* Fallbacks for cvpx */
 static const vlc_fourcc_t p_CVPX_VIDEO_NV12_fallback[] = {
-    VLC_CODEC_CVPX_NV12, VLC_CODEC_I420, 0,
+    VLC_CODEC_CVPX_NV12, VLC_CODEC_NV12, VLC_CODEC_I420, 0,
 };
 static const vlc_fourcc_t p_CVPX_VIDEO_UYVY_fallback[] = {
-    VLC_CODEC_CVPX_UYVY, VLC_CODEC_I420, 0,
+    VLC_CODEC_CVPX_UYVY, VLC_CODEC_UYVY, 0,
 };
 static const vlc_fourcc_t p_CVPX_VIDEO_I420_fallback[] = {
     VLC_CODEC_CVPX_I420, VLC_CODEC_I420, 0,
@@ -389,7 +389,7 @@ static const vlc_fourcc_t p_CVPX_VIDEO_BGRA_fallback[] = {
     VLC_CODEC_CVPX_BGRA, VLC_CODEC_BGRA, 0,
 };
 static const vlc_fourcc_t p_CVPX_VIDEO_P010_fallback[] = {
-    VLC_CODEC_CVPX_P010, VLC_CODEC_P010, VLC_CODEC_I420_10B, 0
+    VLC_CODEC_CVPX_P010, VLC_CODEC_P010, VLC_CODEC_I420_10L, 0
 };
 
 static const vlc_fourcc_t p_VAAPI_420_fallback[] = {
@@ -397,11 +397,15 @@ static const vlc_fourcc_t p_VAAPI_420_fallback[] = {
 };
 
 static const vlc_fourcc_t p_VAAPI_420_10BPP_fallback[] = {
-    VLC_CODEC_VAAPI_420_10BPP, VLC_CODEC_I420_10B, VLC_CODEC_P010, 0,
+    VLC_CODEC_VAAPI_420_10BPP, VLC_CODEC_P010, VLC_CODEC_I420_10L, 0,
 };
 
 static const vlc_fourcc_t p_D3D9_OPAQUE_fallback[] = {
     VLC_CODEC_D3D9_OPAQUE, VLC_CODEC_I420, 0,
+};
+
+static const vlc_fourcc_t p_D3D9_OPAQUE_10B_fallback[] = {
+    VLC_CODEC_D3D9_OPAQUE_10B, VLC_CODEC_P010, VLC_CODEC_I420_10L, 0,
 };
 
 static const vlc_fourcc_t p_D3D11_OPAQUE_fallback[] = {
@@ -409,11 +413,11 @@ static const vlc_fourcc_t p_D3D11_OPAQUE_fallback[] = {
 };
 
 static const vlc_fourcc_t p_D3D11_OPAQUE_10B_fallback[] = {
-    VLC_CODEC_D3D11_OPAQUE_10B, VLC_CODEC_P010, 0,
+    VLC_CODEC_D3D11_OPAQUE_10B, VLC_CODEC_P010, VLC_CODEC_I420_10L, 0,
 };
 
 static const vlc_fourcc_t p_D3D11_OPAQUE_RGBA_fallback[] = {
-    VLC_CODEC_D3D11_OPAQUE, VLC_CODEC_RGBA, 0,
+    VLC_CODEC_D3D11_OPAQUE_RGBA, VLC_CODEC_RGBA, 0,
 };
 
 static const vlc_fourcc_t p_I440_fallback[] = {
@@ -503,6 +507,7 @@ static const vlc_fourcc_t *pp_YUV_fallback[] = {
     p_VAAPI_420_fallback,
     p_VAAPI_420_10BPP_fallback,
     p_D3D9_OPAQUE_fallback,
+    p_D3D9_OPAQUE_10B_fallback,
     p_D3D11_OPAQUE_fallback,
     p_D3D11_OPAQUE_10B_fallback,
     NULL,
@@ -529,6 +534,7 @@ static const vlc_fourcc_t p_list_YUV[] = {
     VLC_CODEC_CVPX_NV12,
     VLC_CODEC_CVPX_UYVY,
     VLC_CODEC_CVPX_I420,
+    VLC_CODEC_CVPX_P010,
     VLC_CODEC_VAAPI_420,
     VLC_CODEC_VAAPI_420_10BPP,
     VLC_CODEC_D3D9_OPAQUE,
@@ -614,6 +620,13 @@ const vlc_fourcc_t *vlc_fourcc_GetRGBFallback( vlc_fourcc_t i_fourcc )
     return GetFallback( i_fourcc, pp_RGB_fallback, p_RGB32_fallback );
 }
 
+const vlc_fourcc_t *vlc_fourcc_GetFallback( vlc_fourcc_t i_fourcc )
+{
+    return vlc_fourcc_IsYUV( i_fourcc)
+            ? vlc_fourcc_GetYUVFallback( i_fourcc )
+            : vlc_fourcc_GetRGBFallback( i_fourcc );
+}
+
 bool vlc_fourcc_AreUVPlanesSwapped( vlc_fourcc_t a, vlc_fourcc_t b )
 {
     static const vlc_fourcc_t pp_swapped[][4] = {
@@ -663,6 +676,13 @@ bool vlc_fourcc_IsYUV(vlc_fourcc_t fcc)
 #define PLANAR_8(n, w_den, h_den)        PLANAR(n, w_den, h_den, 1, 8)
 #define PLANAR_16(n, w_den, h_den, bits) PLANAR(n, w_den, h_den, 2, bits)
 
+#define SEMIPLANAR(w_den, h_den, size, bits) \
+    { .plane_count = 2, \
+      .p = { {.w = {1,    1}, .h = {1,    1}}, \
+             {.w = {2,w_den}, .h = {1,h_den}} }, \
+      .pixel_size = size, \
+      .pixel_bits = bits }
+
 #define PACKED_FMT(size, bits) \
     { .plane_count = 1, \
       .p = { {.w = {1,1}, .h = {1,1}} }, \
@@ -684,7 +704,7 @@ static const struct
     { { VLC_CODEC_I411 },                      PLANAR_8(3, 4, 1) },
     { { VLC_CODEC_YUV_PLANAR_410 },            PLANAR_8(3, 4, 4) },
     { { VLC_CODEC_YUV_PLANAR_420 },            PLANAR_8(3, 2, 2) },
-    { { VLC_CODEC_NV12, VLC_CODEC_NV21 },      PLANAR_8(2, 1, 2) },
+    { { VLC_CODEC_NV12, VLC_CODEC_NV21 },      SEMIPLANAR(2, 2, 1, 8) },
     { { VLC_CODEC_YUV_PLANAR_422 },            PLANAR_8(3, 2, 1) },
     { { VLC_CODEC_NV16, VLC_CODEC_NV61 },      PLANAR_8(2, 1, 1) },
     { { VLC_CODEC_YUV_PLANAR_440 },            PLANAR_8(3, 1, 2) },
@@ -698,6 +718,18 @@ static const struct
         VLC_CODEC_GBR_PLANAR_9B },             PLANAR_16(3, 1, 1, 9) },
     { { VLC_CODEC_GBR_PLANAR_10L,
         VLC_CODEC_GBR_PLANAR_10B },            PLANAR_16(3, 1, 1, 10) },
+    { { VLC_CODEC_GBR_PLANAR_12L,
+        VLC_CODEC_GBR_PLANAR_12B },            PLANAR_16(3, 1, 1, 12) },
+    { { VLC_CODEC_GBR_PLANAR_14L,
+        VLC_CODEC_GBR_PLANAR_14B },            PLANAR_16(3, 1, 1, 14) },
+    { { VLC_CODEC_GBR_PLANAR_16L,
+        VLC_CODEC_GBR_PLANAR_16B },            PLANAR_16(3, 1, 1, 16) },
+    { { VLC_CODEC_GBRA_PLANAR_10L,
+        VLC_CODEC_GBRA_PLANAR_10B },           PLANAR_16(4, 1, 1, 10) },
+    { { VLC_CODEC_GBRA_PLANAR_12L,
+        VLC_CODEC_GBRA_PLANAR_12B },           PLANAR_16(4, 1, 1, 12) },
+    { { VLC_CODEC_GBRA_PLANAR_16L,
+        VLC_CODEC_GBRA_PLANAR_16B },           PLANAR_16(4, 1, 1, 16) },
 
     { { VLC_CODEC_I420_16L,
         VLC_CODEC_I420_16B },                  PLANAR_16(3, 2, 2, 16) },
@@ -707,6 +739,8 @@ static const struct
         VLC_CODEC_I420_10B },                  PLANAR_16(3, 2, 2, 10) },
     { { VLC_CODEC_I420_9L,
         VLC_CODEC_I420_9B },                   PLANAR_16(3, 2, 2,  9) },
+    { { VLC_CODEC_I422_16L,
+        VLC_CODEC_I422_16B },                  PLANAR_16(3, 2, 1, 16) },
     { { VLC_CODEC_I422_12L,
         VLC_CODEC_I422_12B },                  PLANAR_16(3, 2, 1, 12) },
     { { VLC_CODEC_I422_10L,
@@ -723,11 +757,14 @@ static const struct
         VLC_CODEC_I444_16B },                  PLANAR_16(3, 1, 1, 16) },
     { { VLC_CODEC_YUVA_444_10L,
         VLC_CODEC_YUVA_444_10B },              PLANAR_16(4, 1, 1, 10) },
-    { { VLC_CODEC_P010 },                      PLANAR_16(2, 1, 2, 10) },
+    { { VLC_CODEC_P010 },                      SEMIPLANAR(2, 2, 2, 10) },
 
     { { VLC_CODEC_YUV_PACKED },                PACKED_FMT(2, 16) },
     { { VLC_CODEC_RGB8, VLC_CODEC_GREY,
         VLC_CODEC_YUVP, VLC_CODEC_RGBP },      PACKED_FMT(1, 8) },
+
+    { { VLC_CODEC_GREY_16L,
+        VLC_CODEC_GREY_16B },                  PACKED_FMT(2, 16) },
 
     { { VLC_CODEC_RGB15, 0 },                  PACKED_FMT(2, 15) },
     { { VLC_CODEC_RGB12, 0 },                  PACKED_FMT(2, 12) },

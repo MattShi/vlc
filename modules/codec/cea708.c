@@ -45,7 +45,7 @@ struct cea708_demux_t
    uint8_t i_total_data;
    uint8_t i_data;
    uint8_t data[CEA708_DTVCC_MAX_PKT_SIZE];
-   mtime_t i_time;
+   vlc_tick_t i_time;
    service_data_hdlr_t p_callback;
    void *priv;
 };
@@ -73,7 +73,7 @@ cea708_demux_t * CEA708_DTVCC_Demuxer_New( void *priv, service_data_hdlr_t hdlr 
     return h;
 }
 
-static void CEA708_DTVCC_Demux_ServiceBlocks( cea708_demux_t *h, mtime_t i_start,
+static void CEA708_DTVCC_Demux_ServiceBlocks( cea708_demux_t *h, vlc_tick_t i_start,
                                               const uint8_t *p_data, size_t i_data )
 {
     while( i_data >= 2 )
@@ -87,8 +87,6 @@ static void CEA708_DTVCC_Demux_ServiceBlocks( cea708_demux_t *h, mtime_t i_start
         }
         else if( i_sid == 0x07 )
         {
-            if( i_data < 2 )
-                return;
             i_sid = p_data[1] & 0x3F;
             if( i_sid < 0x07 )
                 return;
@@ -103,7 +101,7 @@ static void CEA708_DTVCC_Demux_ServiceBlocks( cea708_demux_t *h, mtime_t i_start
     }
 }
 
-void CEA708_DTVCC_Demuxer_Push( cea708_demux_t *h, mtime_t i_start, const uint8_t data[3] )
+void CEA708_DTVCC_Demuxer_Push( cea708_demux_t *h, vlc_tick_t i_start, const uint8_t data[3] )
 {
     if( (data[0] & 0x03) == 3 ) /* Header packet */
     {
@@ -442,8 +440,8 @@ struct cea708_t
 
     /* Decoding context */
     cea708_window_t *p_cw; /* current window */
-    mtime_t suspended_deadline; /* > 0 when delay is active */
-    mtime_t i_clock;
+    vlc_tick_t suspended_deadline; /* not VLC_TICK_INVALID when delay is active */
+    vlc_tick_t i_clock;
     bool b_text_waiting;
 };
 
@@ -981,7 +979,7 @@ static text_segment_t * CEA708RowToSegments( const cea708_text_row_t *p_row,
 }
 
 static void CEA708SpuConvert( const cea708_window_t *p_w,
-                              subpicture_updater_sys_region_t *p_region )
+                              substext_updater_region_t *p_region )
 {
     if( !p_w->b_visible || CEA708_Window_RowCount( p_w ) == 0 )
         return;
@@ -1046,8 +1044,8 @@ static subpicture_t *CEA708_BuildSubtitle( cea708_t *p_cea708 )
     if( !p_spu )
         return NULL;
 
-    subpicture_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
-    subpicture_updater_sys_region_t *p_region = &p_spu_sys->region;
+    subtext_updater_sys_t *p_spu_sys = p_spu->updater.p_sys;
+    substext_updater_region_t *p_region = &p_spu_sys->region;
 
     p_spu_sys->margin_ratio = CEA708_SCREEN_SAFE_MARGIN_RATIO;
 
@@ -1058,7 +1056,7 @@ static subpicture_t *CEA708_BuildSubtitle( cea708_t *p_cea708 )
         {
             if( p_region != &p_spu_sys->region )
             {
-                subpicture_updater_sys_region_t *p_newregion =
+                substext_updater_region_t *p_newregion =
                         SubpictureUpdaterSysRegionNew();
                 if( p_newregion == NULL )
                     break;
@@ -1071,7 +1069,7 @@ static subpicture_t *CEA708_BuildSubtitle( cea708_t *p_cea708 )
     }
 
     p_spu->i_start    = p_cea708->i_clock;
-    p_spu->i_stop     = p_cea708->i_clock + 10000000;   /* 10s max */
+    p_spu->i_stop     = p_cea708->i_clock + VLC_TICK_FROM_SEC(10);   /* 10s max */
 
     p_spu->b_ephemer  = true;
     p_spu->b_absolute = false;
@@ -1086,7 +1084,7 @@ static void CEA708_Decoder_Init( cea708_t *p_cea708 )
     for(size_t i=0; i<CEA708_WINDOWS_COUNT; i++)
         CEA708_Window_Init( &p_cea708->window[i] );
     p_cea708->p_cw = &p_cea708->window[0];
-    p_cea708->suspended_deadline = 0;
+    p_cea708->suspended_deadline = VLC_TICK_INVALID;
     p_cea708->b_text_waiting = false;
     p_cea708->i_clock = 0;
 }
@@ -1128,7 +1126,7 @@ cea708_t * CEA708_Decoder_New( decoder_t *p_dec )
 
 static void CEA708_Output( cea708_t *p_cea708 )
 {
-    Debug(printf("@%ld ms\n", p_cea708->i_clock / 1000));
+    Debug(printf("@%ld ms\n", MS_FROM_VLC_TICK(p_cea708->i_clock)));
     subpicture_t *p_spu = CEA708_BuildSubtitle( p_cea708 );
     if( p_spu )
         decoder_QueueSub( p_cea708->p_dec, p_spu );
@@ -1377,12 +1375,12 @@ static int CEA708_Decode_C1( uint8_t code, cea708_t *p_cea708 )
         case CEA708_C1_DLY:
             REQUIRE_ARGS_AND_POP_COMMAND(1);
             p_cea708->suspended_deadline = p_cea708->i_clock +
-                    cea708_input_buffer_get( ib ) * 100 * 1000;
+                    VLC_TICK_FROM_MS( cea708_input_buffer_get( ib ) * 100 );
             Debug(printf("[DLY]"));
             break;
         case CEA708_C1_DLC:
             POP_COMMAND();
-            p_cea708->suspended_deadline = 0;
+            p_cea708->suspended_deadline = VLC_TICK_INVALID;
             Debug(printf("[DLC]"));
             break;
         case CEA708_C1_RST:
@@ -1660,11 +1658,11 @@ static void CEA708_Decode_ServiceBuffer( cea708_t *h )
         /* Update internal clock */
         const uint8_t i_consumed = i_in - cea708_input_buffer_size( &h->input_buffer );
         if( i_consumed )
-            h->i_clock += CLOCK_FREQ / 9600 * i_consumed;
+            h->i_clock += vlc_tick_from_samples(1, 9600) * i_consumed;
     }
 }
 
-void CEA708_Decoder_Push( cea708_t *h, mtime_t i_time,
+void CEA708_Decoder_Push( cea708_t *h, vlc_tick_t i_time,
                           const uint8_t *p_data, size_t i_data )
 {
     /* Set new buffer start time */
@@ -1676,8 +1674,8 @@ void CEA708_Decoder_Push( cea708_t *h, mtime_t i_time,
         size_t i_push = cea708_input_buffer_remain(&h->input_buffer);
         if( (i_data - i) < i_push )
             i_push = (i_data - i);
-        else if( h->suspended_deadline > 0 )
-            h->suspended_deadline = 0; /* Full buffer cancels pause */
+        else
+            h->suspended_deadline = VLC_TICK_INVALID; /* Full buffer cancels pause */
 
         for( size_t j=0; j<i_push; j++ )
         {
@@ -1685,17 +1683,17 @@ void CEA708_Decoder_Push( cea708_t *h, mtime_t i_time,
             cea708_input_buffer_add( &h->input_buffer, byte );
         }
 
-        if( h->suspended_deadline > 0 )
+        if( h->suspended_deadline != VLC_TICK_INVALID )
         {
             /* Decoding is paused */
             if ( h->suspended_deadline > h->i_clock )
             {
                 /* Increase internal clock */
                 if( i_push )
-                    h->i_clock += CLOCK_FREQ / 1200 * i_push;
+                    h->i_clock += vlc_tick_from_samples(1, 1200) * i_push;
                 continue;
             }
-            h->suspended_deadline = 0;
+            h->suspended_deadline = VLC_TICK_INVALID;
         }
 
         /* Decode Buffer */

@@ -25,6 +25,8 @@
 #include "util.hpp"
 #include "demux.hpp"
 
+namespace mkv {
+
 /*****************************************************************************
  * Local prototypes
  *****************************************************************************/
@@ -162,13 +164,13 @@ block_t *MemToBlock( uint8_t *p_mem, size_t i_mem, size_t offset)
 }
 
 
-void handle_real_audio(demux_t * p_demux, mkv_track_t * p_tk, block_t * p_blk, mtime_t i_pts)
+void handle_real_audio(demux_t * p_demux, mkv_track_t * p_tk, block_t * p_blk, vlc_tick_t i_pts)
 {
     uint8_t * p_frame = p_blk->p_buffer;
     Cook_PrivateTrackData * p_sys = (Cook_PrivateTrackData *) p_tk->p_sys;
     size_t size = p_blk->i_buffer;
 
-    if( p_tk->i_last_dts == VLC_TS_INVALID )
+    if( p_tk->i_last_dts == VLC_TICK_INVALID )
     {
         for( size_t i = 0; i < p_sys->i_subpackets; i++)
             if( p_sys->p_subpackets[i] )
@@ -207,8 +209,8 @@ void handle_real_audio(demux_t * p_demux, mkv_track_t * p_tk, block_t * p_blk, m
                 return;
 
             memcpy( p_block->p_buffer, p_frame, p_sys->i_subpacket_size );
-            p_block->i_dts = VLC_TS_INVALID;
-            p_block->i_pts = VLC_TS_INVALID;
+            p_block->i_dts = VLC_TICK_INVALID;
+            p_block->i_pts = VLC_TICK_INVALID;
             if( !p_sys->i_subpacket )
             {
                 p_tk->i_last_dts =
@@ -237,7 +239,7 @@ void handle_real_audio(demux_t * p_demux, mkv_track_t * p_tk, block_t * p_blk, m
     }
 }
 
-void send_Block( demux_t * p_demux, mkv_track_t * p_tk, block_t * p_block, unsigned int i_number_frames, mtime_t i_duration )
+void send_Block( demux_t * p_demux, mkv_track_t * p_tk, block_t * p_block, unsigned int i_number_frames, int64_t i_duration )
 {
     demux_sys_t *p_sys = (demux_sys_t *)p_demux->p_sys;
     matroska_segment_c *p_segment = p_sys->p_current_vsegment->CurrentSegment();
@@ -249,7 +251,7 @@ void send_Block( demux_t * p_demux, mkv_track_t * p_tk, block_t * p_block, unsig
                              p_tk->pi_chan_table, p_tk->fmt.i_codec );
     }
 
-    if( p_block->i_dts > VLC_TS_INVALID &&
+    if( p_block->i_dts != VLC_TICK_INVALID &&
         ( p_tk->fmt.i_cat == VIDEO_ES || p_tk->fmt.i_cat == AUDIO_ES ) )
     {
         p_tk->i_last_dts = p_block->i_dts;
@@ -257,8 +259,8 @@ void send_Block( demux_t * p_demux, mkv_track_t * p_tk, block_t * p_block, unsig
 
     if( !p_tk->b_no_duration )
     {
-        p_block->i_length = i_duration * p_tk->f_timecodescale *
-            (double) p_segment->i_timescale / ( 1000.0 * i_number_frames );
+        p_block->i_length = VLC_TICK_FROM_NS(i_duration * p_tk->f_timecodescale *
+                                             p_segment->i_timescale) / i_number_frames;
     }
 
     if( p_tk->b_discontinuity )
@@ -386,15 +388,15 @@ block_t * packetize_wavpack( const mkv_track_t & tk, uint8_t * buffer, size_t  s
 
 void MkvTree_va( demux_t& demuxer, int i_level, const char* fmt, va_list args)
 {
-    static char const * indent = "|   ";
-    static char const * prefix = "+ ";
-    static int  const   indent_len = strlen( indent );
-    static int  const   prefix_len = strlen( prefix );
+    static const char indent[] = "|   ";
+    static const char prefix[] = "+ ";
+    static int  const   indent_len = sizeof( indent ) - 1;
+    static int  const   prefix_len = sizeof( prefix ) - 1;
 
     char   fixed_buffer[256] = {};
     size_t const  static_len = sizeof( fixed_buffer );
     char *            buffer = fixed_buffer;
-    size_t         total_len = indent_len * i_level + prefix_len + strlen( fmt );
+    size_t         total_len = indent_len * i_level + prefix_len + strlen( fmt ) + 1;
 
     if( total_len >= static_len ) {
         buffer = new (std::nothrow) char[total_len] ();
@@ -425,3 +427,5 @@ void MkvTree( demux_t & demuxer, int i_level, const char *psz_format, ... )
     MkvTree_va( demuxer, i_level, psz_format, args );
     va_end( args );
 }
+
+} // namespace

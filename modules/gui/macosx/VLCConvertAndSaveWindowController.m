@@ -267,10 +267,13 @@
         if ([[[_streamTypePopup selectedItem] title] isEqualToString:@"HTTP"]) {
             NSString *muxformat = [self.currentProfile firstObject];
             if ([muxformat isEqualToString:@"wav"] || [muxformat isEqualToString:@"mov"] || [muxformat isEqualToString:@"mp4"] || [muxformat isEqualToString:@"mkv"]) {
-                NSBeginInformationalAlertSheet(_NS("Invalid container format for HTTP streaming"), _NS("OK"), @"", @"", self.window,
-                                               nil, nil, nil, nil,
-                                               _NS("Media encapsulated as %@ cannot be streamed through the HTTP protocol for technical reasons."),
-                                               [[self currentEncapsulationFormatAsFileExtension:YES] uppercaseString]);
+                NSAlert *alert = [[NSAlert alloc] init];
+                [alert setAlertStyle:NSInformationalAlertStyle];
+                [alert setMessageText:_NS("Invalid container format for HTTP streaming")];
+                [alert setInformativeText:[NSString stringWithFormat:_NS("Media encapsulated as %@ cannot be streamed through the HTTP protocol for technical reasons."),
+                                           [[self currentEncapsulationFormatAsFileExtension:YES] uppercaseString]]];
+                [alert beginSheetModalForWindow:self.window
+                              completionHandler:nil];
                 return;
             }
         }
@@ -287,7 +290,7 @@
         input_item_AddOption(p_input, [[NSString stringWithFormat:@"ttl=%@", [_streamTTLField stringValue]] UTF8String], VLC_INPUT_OPTION_TRUSTED);
 
     int returnValue;
-    returnValue = playlist_AddInput(p_playlist, p_input, false, true );
+    returnValue = playlist_AddInput(p_playlist, p_input, false );
 
     if (returnValue == VLC_SUCCESS) {
         /* let's "play" */
@@ -392,6 +395,21 @@
     [_okButton setTitle:_NS("Stream")];
 }
 
+- (void)resetDestination
+{
+    [self setOutputDestination:@""];
+
+    // File panel
+    [[_fileDestinationFileName animator] setHidden: YES];
+    [[_fileDestinationFileNameStub animator] setHidden: NO];
+
+    // Stream panel
+    [_streamDestinationURLLabel setStringValue:_NS("Select Streaming Method")];
+    b_streaming = NO;
+
+    [self updateOKButton];
+}
+
 - (IBAction)cancelDestination:(id)sender
 {
     if ([_streamDestinationView superview] != nil)
@@ -402,7 +420,8 @@
     [_destinationCancelBtn setHidden:YES];
     [[_destinationFileButton animator] setHidden: NO];
     [[_destinationStreamButton animator] setHidden: NO];
-    b_streaming = NO;
+
+    [self resetDestination];
 }
 
 - (IBAction)browseFileDestination:(id)sender
@@ -415,14 +434,11 @@
     [saveFilePanel beginSheetModalForWindow:self.window completionHandler:^(NSInteger returnCode) {
         if (returnCode == NSModalResponseOK) {
             [self setOutputDestination:[[saveFilePanel URL] path]];
-            [_fileDestinationFileName setStringValue: [[NSFileManager defaultManager] displayNameAtPath:_outputDestination]];
-            [[_fileDestinationFileNameStub animator] setHidden: YES];
-            [[_fileDestinationFileName animator] setHidden: NO];
-        } else {
-            [self setOutputDestination:@""];
-            [[_fileDestinationFileName animator] setHidden: YES];
-            [[_fileDestinationFileNameStub animator] setHidden: NO];
+            [self->_fileDestinationFileName setStringValue: [[NSFileManager defaultManager] displayNameAtPath:self->_outputDestination]];
+            [[self->_fileDestinationFileNameStub animator] setHidden: YES];
+            [[self->_fileDestinationFileName animator] setHidden: NO];
         }
+
         [self updateOKButton];
     }];
 }
@@ -432,7 +448,7 @@
 
 - (IBAction)customizeProfile:(id)sender
 {
-    [NSApp beginSheet:_customizePanel modalForWindow:self.window modalDelegate:self didEndSelector:NULL contextInfo:nil];
+    [self.window beginSheet:_customizePanel completionHandler:nil];
 }
 
 - (IBAction)closeCustomizationSheet:(id)sender
@@ -443,8 +459,6 @@
     if (sender == _customizeOkButton)
         [self updateCurrentProfile];
 }
-
-
 
 - (IBAction)videoSettingsChanged:(id)sender
 {
@@ -494,7 +508,7 @@
 
         /* update UI */
         [_self recreateProfilePopup];
-        [_profilePopup selectItemWithTitle:resultingText];
+        [self->_profilePopup selectItemWithTitle:resultingText];
 
         /* update internals */
         [_self switchProfile:self];
@@ -507,7 +521,7 @@
 
 - (IBAction)showStreamPanel:(id)sender
 {
-    [NSApp beginSheet:_streamPanel modalForWindow:self.window modalDelegate:self didEndSelector:NULL contextInfo:nil];
+    [self.window beginSheet:_streamPanel completionHandler:nil];
 }
 
 - (IBAction)closeStreamPanel:(id)sender
@@ -528,23 +542,32 @@
 
     /* catch obvious errors */
     if ([[_streamAddressField stringValue] length] == 0) {
-        NSBeginInformationalAlertSheet(_NS("No Address given"),
-                                       _NS("OK"), @"", @"", _streamPanel, nil, nil, nil, nil,
-                                       @"%@", _NS("In order to stream, a valid destination address is required."));
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSInformationalAlertStyle];
+        [alert setMessageText:_NS("No Address given")];
+        [alert setInformativeText:_NS("In order to stream, a valid destination address is required.")];
+        [alert beginSheetModalForWindow:_streamPanel
+                      completionHandler:nil];
         return;
     }
 
     if ([_streamSAPCheckbox state] && [[_streamChannelField stringValue] length] == 0) {
-        NSBeginInformationalAlertSheet(_NS("No Channel Name given"),
-                                       _NS("OK"), @"", @"", _streamPanel, nil, nil, nil, nil,
-                                       @"%@", _NS("SAP stream announcement is enabled. However, no channel name is provided."));
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSInformationalAlertStyle];
+        [alert setMessageText:_NS("No Channel Name given")];
+        [alert setInformativeText:_NS("SAP stream announcement is enabled. However, no channel name is provided.")];
+        [alert beginSheetModalForWindow:_streamPanel
+                      completionHandler:nil];
         return;
     }
 
     if ([_streamSDPMatrix isEnabled] && [_streamSDPMatrix selectedCell] != [_streamSDPMatrix cellWithTag:0] && [[_streamSDPField stringValue] length] == 0) {
-        NSBeginInformationalAlertSheet(_NS("No SDP URL given"),
-                                       _NS("OK"), @"", @"", _streamPanel, nil, nil, nil, nil,
-                                       @"%@", _NS("A SDP export is requested, but no URL is provided."));
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSInformationalAlertStyle];
+        [alert setMessageText:_NS("No SDP URL given")];
+        [alert setInformativeText:_NS("A SDP export is requested, but no URL is provided.")];
+        [alert beginSheetModalForWindow:_streamPanel
+                      completionHandler:nil];
         return;
     }
 
@@ -594,7 +617,7 @@
     [saveFilePanel setAllowedFileTypes:[NSArray arrayWithObject:@"sdp"]];
     [saveFilePanel beginSheetModalForWindow:_streamPanel completionHandler:^(NSInteger returnCode) {
         if (returnCode == NSModalResponseOK)
-            [_streamSDPField setStringValue:[[saveFilePanel URL] path]];
+            [self->_streamSDPField setStringValue:[[saveFilePanel URL] path]];
     }];
 }
 
@@ -608,44 +631,49 @@
     NSString *desired_type = [paste availableTypeFromArray: types];
     NSData *carried_data = [paste dataForType: desired_type];
 
-    if (carried_data) {
-        if ([desired_type isEqualToString:NSFilenamesPboardType]) {
-            NSArray *values = [[paste propertyListForType: NSFilenamesPboardType] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
+    if (carried_data == nil)
+        return NO;
 
-            if ([values count] > 0) {
-                [self setMRL: toNSStr(vlc_path2uri([[values firstObject] UTF8String], NULL))];
-                [self updateOKButton];
-                [self updateDropView];
-                return YES;
-            }
-        } else if ([desired_type isEqualToString:@"VLCPlaylistItemPboardType"]) {
-            NSArray * array = [[[VLCMain sharedInstance] playlist] draggedItems];
-            NSUInteger count = [array count];
-            if (count > 0) {
-                playlist_t * p_playlist = pl_Get(getIntf());
-                playlist_item_t * p_item = NULL;
+    if ([desired_type isEqualToString:NSFilenamesPboardType]) {
+        NSArray *values = [[paste propertyListForType: NSFilenamesPboardType] sortedArrayUsingSelector:@selector(caseInsensitiveCompare:)];
 
-                PL_LOCK;
-                /* let's look for the first proper input item */
-                for (NSUInteger x = 0; x < count; x++) {
-                    p_item = [[array objectAtIndex:x] pointerValue];
-                    if (p_item) {
-                        if (p_item->p_input) {
-                            if (p_item->p_input->psz_uri != nil) {
-                                [self setMRL: toNSStr(p_item->p_input->psz_uri)];
-                                [self updateDropView];
-                                [self updateOKButton];
-
-                                PL_UNLOCK;
-
-                                return YES;
-                            }
-                        }
-                    }
-                }
-                PL_UNLOCK;
-            }
+        if ([values count] > 0) {
+            [self setMRL: toNSStr(vlc_path2uri([[values firstObject] UTF8String], NULL))];
+            [self updateOKButton];
+            [self updateDropView];
+            return YES;
         }
+    } else if ([desired_type isEqualToString:@"VLCPlaylistItemPboardType"]) {
+        NSArray *draggedItems = [[[VLCMain sharedInstance] playlist] draggedItems];
+
+        // Return early to prevent unnecessary playlist access/locking
+        if ([draggedItems count] <= 0) {
+            return NO;
+        }
+
+        playlist_t *p_playlist = pl_Get(getIntf());
+        playlist_item_t *p_item = NULL;
+
+        PL_LOCK;
+        for (VLCPLItem *draggedItem in draggedItems) {
+            p_item = playlist_ItemGetById(p_playlist, [draggedItem plItemId]);
+
+            // Check if the item is usable
+            if (!p_item || !p_item->p_input || !p_item->p_input->psz_uri) {
+                // Item not usable, reset it.
+                p_item = NULL;
+                continue;
+            }
+
+            // First usable item found
+            [self setMRL: toNSStr(p_item->p_input->psz_uri)];
+            [self updateDropView];
+            [self updateOKButton];
+            break;
+        }
+        PL_UNLOCK;
+
+        return (p_item != NULL) ? YES : NO;
     }
     return NO;
 }
@@ -926,24 +954,31 @@
             [composedOptions appendFormat:@",soverlay"];
     }
 
+    // Close transcode
+    [composedOptions appendString:@"}"];
+
     if (!b_streaming) {
         /* file transcoding */
         // add muxer
-        [composedOptions appendFormat:@"}:standard{mux=%@", [self.currentProfile firstObject]];
+        [composedOptions appendFormat:@":standard{mux=%@", [self.currentProfile firstObject]];
 
 
         // add output destination
-        [composedOptions appendFormat:@",access=file{no-overwrite},dst=%@}", _outputDestination];
+        _outputDestination = [_outputDestination stringByReplacingOccurrencesOfString:@"\""
+                                                                           withString:@"\\\""];
+        [composedOptions appendFormat:@",access=file{no-overwrite},dst=\"%@\"}", _outputDestination];
     } else {
+        NSString *destination = [NSString stringWithFormat:@"\"%@:%@\"", _outputDestination, [_streamPortField stringValue]];
+
         /* streaming */
         if ([[[_streamTypePopup selectedItem] title] isEqualToString:@"RTP"])
             [composedOptions appendFormat:@":rtp{mux=ts,dst=%@,port=%@", _outputDestination, [_streamPortField stringValue]];
         else if ([[[_streamTypePopup selectedItem] title] isEqualToString:@"UDP"])
-            [composedOptions appendFormat:@":standard{mux=ts,dst=%@,port=%@,access=udp", _outputDestination, [_streamPortField stringValue]];
+            [composedOptions appendFormat:@":standard{mux=ts,dst=%@,access=udp", destination];
         else if ([[[_streamTypePopup selectedItem] title] isEqualToString:@"MMSH"])
-            [composedOptions appendFormat:@":standard{mux=asfh,dst=%@,port=%@,access=mmsh", _outputDestination, [_streamPortField stringValue]];
+            [composedOptions appendFormat:@":standard{mux=asfh,dst=%@,access=mmsh", destination];
         else
-            [composedOptions appendFormat:@":standard{mux=%@,dst=%@,port=%@,access=http", [self.currentProfile firstObject], [_streamPortField stringValue], _outputDestination];
+            [composedOptions appendFormat:@":standard{mux=%@,dst=%@,access=http", [self.currentProfile firstObject], destination];
 
         if ([_streamSAPCheckbox state])
             [composedOptions appendFormat:@",sap,name=\"%@\"", [_streamChannelField stringValue]];
@@ -963,7 +998,7 @@
             }
         }
 
-        [composedOptions appendString:@"} :sout-keep"];
+        [composedOptions appendString:@"}"];
     }
 
     return [NSString stringWithString:composedOptions];

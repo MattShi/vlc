@@ -86,16 +86,24 @@ w:get_value(): Return identifier of the selected item. Corresponds to the text v
 w:clear(): Clear a list or drop_down widget. After that, all values previously added are lost.
 w:get_selection(): Retrieve a table representing the current selection. Keys are the ids, values are the texts associated. Applies to: list.
 
+errno
+-----
+List of potential errors. It contains the following values:
+  .ENOENT: No such file or directory
+  .EEXIST: File exists
+  .EACCESS: Permission denied
+  .EINVAL: Invalid argument
+
 
 Extension
 ---------
 deactivate(): Deactivate current extension (after the end of the current function).
 
-HTTPd
------
-http( host, port, [cert, key, ca, crl]): create a new HTTP (SSL) daemon.
+HTTPd (only usable for interfaces)
+----------------------------------
+httpd(): create a new HTTP daemon.
 
-local h = vlc.httpd( "localhost", 8080 )
+local h = vlc.httpd()
 h:handler( url, user, password, callback, data ) -- add a handler for given url. If user and password are non nil, they will be used to authenticate connecting clients. callback will be called to handle connections. The callback function takes 7 arguments: data, url, request, type, in, addr, host. It returns the reply as a string.
 h:file( url, mime, user, password, callback, data ) -- add a file for given url with given mime type. If user and password are non nil, they will be used to authenticate connecting clients. callback will be called to handle connections. The callback function takes 2 arguments: data and request. It returns the reply as a string.
 h:redirect( url_dst, url_src ): Redirect all connections from url_src to url_dst.
@@ -130,6 +138,27 @@ input.item(): Get the current input item. Input item methods are:
     .send_bitrate
     .played_abuffers
     .lost_abuffers
+
+Input/Output
+------------
+All path for this namespace are expected to be passed as UTF8 strings.
+
+io.mkdir("path", "mode"): Similar to mkdir(2). The mode is passed as a string
+  to allow for octal representations. This returns a success code (non 0 in
+  case of failure), and a more specific error code as its 2nd returned value
+  in case of failure. The error code is to be used with vlc.errno
+io.readdir("path"): Lists all files & directories in the provided folder.
+io.open("path"[, "mode"]): Similar to lua's io.open. Mode is optional and 
+  defaults to "r". It returns a file object with the following member functions:
+    .read
+    .write
+    .seek
+    .flush
+    .close
+  all of which are used exactly like the lua object returned by io.open
+io.unlink("path"): Similar to os.remove. First return value is 0 in case
+  of success. In case of failure, the 2nd return parameter is an error
+  code to be compared against vlc.errno values.
 
 Messages
 --------
@@ -361,6 +390,8 @@ s = vlc.stream( "http://www.videolan.org/" )
 s:read( 128 ) -- read up to 128 characters. Return 0 if no more data is available (FIXME?).
 s:readline() -- read a line. Return nil if EOF was reached.
 s:addfilter() -- add a stream filter. If no argument was specified, try to add all automatic stream filters.
+s:getsize() -- returns the size of the stream, or nil if unknown
+s:seek(offset) -- seeks from offset bytes (from the begining of the stream). Returns nil in case of error
 
 Strings
 -------
@@ -451,3 +482,9 @@ reader:node_empty(): queries whether the previous invocation of reader:read()
   1 if the node is empty, and 0 if it is not.
 
 The simplexml module can also be used to parse XML documents easily.
+
+Random number & bytes
+---------------------
+vlc.rand.number(): Returns a random number between 0 and 2^31 - 1
+vlc.rand.bytes(size): Returns <size> random bytes
+

@@ -32,6 +32,7 @@
 #import "CompatibilityFixes.h"
 #import "VLCPopupPanelController.h"
 #import "VLCTextfieldPanelController.h"
+#import "NSString+Helpers.h"
 
 #import <vlc_common.h>
 
@@ -208,6 +209,7 @@
 - (void)windowDidLoad
 {
     [_applyProfileCheckbox setState:[[NSUserDefaults standardUserDefaults] boolForKey:@"AudioEffectApplyProfileOnStartup"]];
+    [_applyProfileCheckbox setTitle:_NS("Apply profile at next launch")];
 
     /* setup the user's language */
     /* Equalizer */
@@ -267,10 +269,11 @@
                                                   "thereby widening the stereo effect.")];
 
     /* generic */
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"equalizer"]] setLabel:_NS("Equalizer")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"compressor"]] setLabel:_NS("Compressor")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"spatializer"]] setLabel:_NS("Spatializer")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"filter"]] setLabel:_NS("Filter")];
+    [_segmentView setLabel:_NS("Equalizer") forSegment:0];
+    [_segmentView setLabel:_NS("Compressor") forSegment:1];
+    [_segmentView setLabel:_NS("Spatializer") forSegment:2];
+    [_segmentView setLabel:_NS("Filter") forSegment:3];
+
     [self.window setTitle:_NS("Audio Effects")];
     [self.window setExcludedFromWindowsMenu:YES];
     [self.window setCollectionBehavior: NSWindowCollectionBehaviorFullScreenAuxiliary];
@@ -313,7 +316,6 @@
 
 - (void)resetProfileSelector
 {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [_profilePopup removeAllItems];
 
     // Ignore "Default" index 0 from settings
@@ -351,7 +353,7 @@
     if ([self.window isKeyWindow])
         [self.window orderOut:sender];
     else {
-        [self.window setLevel: [[[VLCMain sharedInstance] voutController] currentStatusWindowLevel]];
+        [self.window setLevel: [[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
         [self.window makeKeyAndOrderFront:sender];
     }
 }
@@ -408,7 +410,6 @@
     if (_applyProfileCheckbox.state == NSOffState)
         return;
 
-    playlist_t *p_playlist = pl_Get(getIntf());
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     if ([[self generateProfileString] compare:[VLCAudioEffectsWindowController defaultProfileString]] == NSOrderedSame)
         return;
@@ -516,7 +517,7 @@
 
         NSInteger currentProfileIndex = [_self currentProfileIndex];
         if (returnCode != NSModalResponseOK) {
-            [_profilePopup selectItemAtIndex:currentProfileIndex];
+            [self->_profilePopup selectItemAtIndex:currentProfileIndex];
             return;
         }
 
@@ -525,17 +526,14 @@
 
         // duplicate names are not allowed in the popup control
         if ([resultingText length] == 0 || [profileNames containsObject:resultingText]) {
-            [_profilePopup selectItemAtIndex:currentProfileIndex];
+            [self->_profilePopup selectItemAtIndex:currentProfileIndex];
 
             NSAlert *alert = [[NSAlert alloc] init];
             [alert setAlertStyle:NSCriticalAlertStyle];
             [alert setMessageText:_NS("Please enter a unique name for the new profile.")];
             [alert setInformativeText:_NS("Multiple profiles with the same name are not allowed.")];
-
             [alert beginSheetModalForWindow:_self.window
-                              modalDelegate:nil
-                             didEndSelector:nil
-                                contextInfo:nil];
+                          completionHandler:nil];
             return;
         }
 
@@ -574,7 +572,7 @@
 
         NSInteger currentProfileIndex = [_self currentProfileIndex];
         if (returnCode != NSModalResponseOK) {
-            [_profilePopup selectItemAtIndex:currentProfileIndex];
+            [self->_profilePopup selectItemAtIndex:currentProfileIndex];
             return;
         }
 
@@ -721,7 +719,7 @@ static bool GetEqualizerStatus(intf_thread_t *p_custom_intf,
     NSString *preset = [[[NSUserDefaults standardUserDefaults] objectForKey:@"EQValues"] objectAtIndex:presetID];
     NSArray *values = [preset componentsSeparatedByString:@" "];
     NSUInteger count = [values count];
-    for (NSUInteger x = 0; x < count; x++)
+    for (int x = 0; x < count; x++)
         [self setValue:[[values objectAtIndex:x] floatValue] forSlider:x];
 }
 
@@ -839,7 +837,7 @@ static bool GetEqualizerStatus(intf_thread_t *p_custom_intf,
         [workArray addObject:resultingText];
         [defaults setObject:[NSArray arrayWithArray:workArray] forKey:@"EQTitles"];
         workArray = [[NSMutableArray alloc] initWithArray:[defaults objectForKey:@"EQPreampValues"]];
-        [workArray addObject:[NSString stringWithFormat:@"%.1f", [_equalizerPreampSlider floatValue]]];
+        [workArray addObject:[NSString stringWithFormat:@"%.1f", [self->_equalizerPreampSlider floatValue]]];
         [defaults setObject:[NSArray arrayWithArray:workArray] forKey:@"EQPreampValues"];
         workArray = [[NSMutableArray alloc] initWithArray:[defaults objectForKey:@"EQNames"]];
         [workArray addObject:decomposedStringWithCanonicalMapping];

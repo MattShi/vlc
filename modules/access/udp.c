@@ -76,12 +76,12 @@ vlc_module_begin ()
     set_callbacks( Open, Close )
 vlc_module_end ()
 
-struct access_sys_t
+typedef struct
 {
     int fd;
     int timeout;
     size_t mtu;
-};
+} access_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -194,7 +194,6 @@ static void Close( vlc_object_t *p_this )
 static int Control( stream_t *p_access, int i_query, va_list args )
 {
     bool    *pb_bool;
-    int64_t *pi_64;
 
     switch( i_query )
     {
@@ -207,9 +206,8 @@ static int Control( stream_t *p_access, int i_query, va_list args )
             break;
 
         case STREAM_GET_PTS_DELAY:
-            pi_64 = va_arg( args, int64_t * );
-            *pi_64 = INT64_C(1000)
-                   * var_InheritInteger(p_access, "network-caching");
+            *va_arg( args, vlc_tick_t * ) =
+                VLC_TICK_FROM_MS(var_InheritInteger(p_access, "network-caching"));
             break;
 
         default:
@@ -233,6 +231,12 @@ static block_t *BlockUDP(stream_t *access, bool *restrict eof)
         return NULL;
     }
 
+#ifdef __linux__
+    const int trunc_flag = MSG_TRUNC;
+#else
+    const int trunc_flag = 0;
+#endif
+
     struct iovec iov = {
         .iov_base = pkt->p_buffer,
         .iov_len = sys->mtu,
@@ -240,9 +244,7 @@ static block_t *BlockUDP(stream_t *access, bool *restrict eof)
     struct msghdr msg = {
         .msg_iov = &iov,
         .msg_iovlen = 1,
-#ifdef __linux__
-        .msg_flags = MSG_TRUNC,
-#endif
+        .msg_flags = trunc_flag,
     };
 
     struct pollfd ufd[1];
@@ -260,7 +262,8 @@ static block_t *BlockUDP(stream_t *access, bool *restrict eof)
             goto skip;
      }
 
-    ssize_t len = recvmsg(sys->fd, &msg, 0);
+    ssize_t len = recvmsg(sys->fd, &msg, trunc_flag);
+
     if (len < 0)
     {
 skip:
@@ -268,8 +271,7 @@ skip:
         return NULL;
     }
 
-#ifdef MSG_TRUNC
-    if (msg.msg_flags & MSG_TRUNC)
+    if (msg.msg_flags & trunc_flag)
     {
         msg_Err(access, "%zd bytes packet truncated (MTU was %zu)",
                 len, sys->mtu);
@@ -277,7 +279,6 @@ skip:
         sys->mtu = len;
     }
     else
-#endif
         pkt->i_buffer = len;
 
     return pkt;

@@ -263,7 +263,6 @@ create_toolbar_item(NSString *itemIdent, NSString *name, NSString *desc, NSStrin
 - (void)initStrings
 {
     /* audio */
-    [_audio_dolbyLabel setStringValue: _NS("Force detection of Dolby Surround")];
     [_audio_effectsBox setTitle: _NS("Audio Effects")];
     [_audio_enableCheckbox setTitle: _NS("Enable audio")];
     [_audio_generalBox setTitle: _NS("General Audio")];
@@ -295,6 +294,7 @@ create_toolbar_item(NSString *itemIdent, NSString *name, NSString *desc, NSStrin
     [_input_cachelevel_customLabel setStringValue: _NS("Use the complete preferences to configure custom caching values for each access module.")];
     [_input_muxBox setTitle: _NS("Codecs / Muxers")];
     [_input_netBox setTitle: _NS("Network")];
+    [_input_hardwareAccelerationCheckbox setTitle: _NS("Enable hardware acceleration")];
     [_input_postprocLabel setStringValue: _NS("Post-Processing Quality")];
     [_input_skipLoopLabel setStringValue: _NS("Skip the loop filter for H.264 decoding")];
     [_input_urlhandlerButton setTitle: _NS("Edit default application settings for network protocols")];
@@ -309,9 +309,6 @@ create_toolbar_item(NSString *itemIdent, NSString *name, NSString *desc, NSStrin
     /* interface */
     [_intf_generalSettingsBox setTitle:_NS("General settings")];
     [_intf_languageLabel setStringValue: _NS("Language")];
-    [_intf_styleLabel setStringValue: _NS("Interface style")];
-    [_intf_style_darkButtonCell setTitle: _NS("Dark")];
-    [_intf_style_brightButtonCell setTitle: _NS("Bright")];
 
     [_intf_playbackControlBox setTitle:_NS("Playback control")];
     [_intf_continueplaybackLabel setStringValue:_NS("Continue playback")];
@@ -416,8 +413,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
     assert(p_item);
 
     char **values, **texts;
-    ssize_t count = config_GetPszChoices(VLC_OBJECT(getIntf()), name,
-                                         &values, &texts);
+    ssize_t count = config_GetPszChoices(name, &values, &texts);
     if (count < 0) {
         msg_Err(p_intf, "Cannot get choices for %s", name);
         return;
@@ -466,10 +462,10 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
     int64_t *values;
     char **texts;
-    ssize_t count = config_GetIntChoices(VLC_OBJECT(getIntf()), name, &values, &texts);
+    ssize_t count = config_GetIntChoices(name, &values, &texts);
     for (ssize_t i = 0; i < count; i++) {
         NSMenuItem *mi = [[NSMenuItem alloc] initWithTitle: toNSStr(texts[i]) action: NULL keyEquivalent: @""];
-        [mi setRepresentedObject:[NSNumber numberWithInt:values[i]]];
+        [mi setRepresentedObject:[NSNumber numberWithInteger:values[i]]];
         [[object menu] addItem:mi];
 
         if (p_item->value.i == values[i])
@@ -485,13 +481,13 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
 - (void)setupButton: (NSButton *)object forBoolValue: (const char *)name
 {
-    [object setState: config_GetInt(p_intf, name)];
+    [object setState: config_GetInt(name)];
     [object setToolTip: _NS(config_GetLabel(p_intf, name))];
 }
 
 - (void)setupField:(NSTextField *)object forOption:(const char *)psz_option
 {
-    char *psz_tmp = config_GetPsz(p_intf, psz_option);
+    char *psz_tmp = config_GetPsz(psz_option);
     [object setStringValue: toNSStr(psz_tmp)];
     [object setToolTip: _NS(config_GetLabel(p_intf, psz_option))];
     free(psz_tmp);
@@ -499,7 +495,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
 - (BOOL)hasModule:(NSString *)moduleName inConfig:(NSString *)config
 {
-    char *value = config_GetPsz(p_intf, [config UTF8String]);
+    char *value = config_GetPsz([config UTF8String]);
     NSString *modules = toNSStr(value);
     free(value);
 
@@ -508,7 +504,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
 - (void)changeModule:(NSString *)moduleName inConfig:(NSString *)config enable:(BOOL)enable
 {
-    char *value = config_GetPsz(p_intf, [config UTF8String]);
+    char *value = config_GetPsz([config UTF8String]);
     NSString *modules = toNSStr(value);
     free(value);
 
@@ -524,14 +520,13 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
     // trim empty entries
     [components removeObject:@""];
 
-    config_PutPsz(p_intf, [config UTF8String], [[components componentsJoinedByString:@":"] UTF8String]);
+    config_PutPsz([config UTF8String], [[components componentsJoinedByString:@":"] UTF8String]);
 }
 
 - (void)resetControls
 {
-    module_config_t *p_item;
-    int i, y = 0;
-    char *psz_tmp;
+    int i = 0;
+    NSInteger y = 0;
 
     /**********************
      * interface settings *
@@ -579,14 +574,6 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
     BOOL growlEnabled = [self hasModule:@"growl" inConfig:@"control"];
     [_intf_enableNotificationsCheckbox setState: growlEnabled ? NSOnState : NSOffState];
 
-    if (config_GetInt(p_intf, "macosx-interfacestyle")) {
-        [_intf_style_darkButtonCell setState: YES];
-        [_intf_style_brightButtonCell setState: NO];
-    } else {
-        [_intf_style_darkButtonCell setState: NO];
-        [_intf_style_brightButtonCell setState: YES];
-    }
-
     BOOL httpEnabled = [self hasModule:@"http" inConfig:@"extraintf"];
     [_intf_enableluahttpCheckbox setState: httpEnabled ? NSOnState : NSOffState];
     _intf_luahttppwdTextField.enabled = httpEnabled;
@@ -598,7 +585,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
      ******************/
     [self setupButton:_audio_enableCheckbox forBoolValue: "audio"];
 
-    if (config_GetInt(p_intf, "volume-save")) {
+    if (config_GetInt("volume-save")) {
         [_audio_autosavevol_yesButtonCell setState: NSOnState];
         [_audio_autosavevol_noButtonCell setState: NSOffState];
         [_audio_volTextField setEnabled: NO];
@@ -612,13 +599,12 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
         [_audio_volTextField setEnabled: YES];
         [_audio_volSlider setEnabled: YES];
 
-        i = var_InheritInteger(p_intf, "auhal-volume");
+        i = (int)var_InheritInteger(p_intf, "auhal-volume");
         i = i * 200. / AOUT_VOLUME_MAX;
         [_audio_volSlider setIntValue: i];
         [_audio_volTextField setIntValue: i];
     }
 
-    [self setupButton:_audio_dolbyPopup forIntList: "force-dolby-surround"];
     [self setupField:_audio_langTextField forOption: "audio-language"];
 
     [self setupButton:_audio_visualPopup forModuleList: "audio-visual"];
@@ -628,7 +614,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
         [self setupField:_audio_lastuserTextField forOption:"lastfm-username"];
         [self setupField:_audio_lastpwdSecureTextField forOption:"lastfm-password"];
 
-        if (config_ExistIntf(VLC_OBJECT(p_intf), "audioscrobbler")) {
+        if (config_ExistIntf("audioscrobbler")) {
             [_audio_lastCheckbox setState: NSOnState];
             [_audio_lastuserTextField setEnabled: YES];
             [_audio_lastpwdSecureTextField setEnabled: YES];
@@ -664,7 +650,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
         i++;
     }
     [_video_devicePopup selectItemAtIndex: 0];
-    [_video_devicePopup selectItemWithTag: config_GetInt(p_intf, "macosx-vdev")];
+    [_video_devicePopup selectItemWithTag: config_GetInt("macosx-vdev")];
 
     [self setupField:_video_snap_folderTextField forOption:"snapshot-path"];
     [self setupField:_video_snap_prefixTextField forOption:"snapshot-prefix"];
@@ -680,7 +666,9 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
      * input & codecs settings *
      ***************************/
     [self setupField:_input_recordTextField forOption:"input-record-path"];
-    [_input_postprocTextField setIntValue: config_GetInt(p_intf, "postproc-q")];
+
+    [self setupButton:_input_hardwareAccelerationCheckbox forBoolValue: "videotoolbox"];
+//    [_input_postprocTextField setIntValue: config_GetInt("postproc-q")];
     [_input_postprocTextField setToolTip: _NS(config_GetLabel(p_intf, "postproc-q"))];
     [self setupButton:_input_skipFramesCheckbox forBoolValue: "skip-frames"];
     [self setupButton:_input_aviPopup forIntList: "avi-index"];
@@ -702,11 +690,11 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
     #define TestCaC(name, factor) \
     cache_equal = cache_equal && \
-    (i_cache * factor == config_GetInt(p_intf, name));
+    (i_cache * factor == config_GetInt(name));
 
     /* Select the accurate value of the PopupButton */
     bool cache_equal = true;
-    int i_cache = config_GetInt(p_intf, "file-caching");
+    int i_cache = (int)config_GetInt("file-caching");
 
     TestCaC("network-caching", 10/3);
     TestCaC("disc-caching", 1);
@@ -731,7 +719,7 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
     [self setupField:_osd_fontTextField forOption: "freetype-font"];
     [self setupButton:_osd_font_colorPopup forIntList: "freetype-color"];
     [self setupButton:_osd_font_sizePopup forIntList: "freetype-rel-fontsize"];
-    i = config_GetInt(p_intf, "freetype-opacity") * 100.0 / 255.0 + 0.5;
+    i = config_GetInt("freetype-opacity") * 100.0 / 255.0 + 0.5;
     [_osd_opacityTextField setIntValue: i];
     [_osd_opacitySlider setIntValue: i];
     [_osd_opacitySlider setToolTip: _NS(config_GetLabel(p_intf, "freetype-opacity"))];
@@ -817,42 +805,40 @@ static inline const char * __config_GetLabel(vlc_object_t *p_this, const char *p
 
 - (IBAction)resetPreferences:(NSControl *)sender
 {
-    NSBeginInformationalAlertSheet(_NS("Reset Preferences"), _NS("Cancel"),
-                                   _NS("Continue"), nil, [sender window], self,
-                                   @selector(sheetDidEnd: returnCode: contextInfo:), NULL, nil, @"%@",
-                                   _NS("This will reset VLC media player's preferences.\n\n"
-                                       "Note that VLC will restart during the process, so your current "
-                                       "playlist will be emptied and eventual playback, streaming or "
-                                       "transcoding activities will stop immediately.\n\n"
-                                       "The Media Library will not be affected.\n\n"
-                                       "Are you sure you want to continue?"));
-}
+    NSAlert *alert = [[NSAlert alloc] init];
+    [alert setAlertStyle:NSInformationalAlertStyle];
+    [alert setMessageText:_NS("Reset Preferences")];
+    [alert setInformativeText:_NS("This will reset VLC media player's preferences.\n\n"
+                                  "Note that VLC will restart during the process, so your current "
+                                  "playlist will be emptied and eventual playback, streaming or "
+                                  "transcoding activities will stop immediately.\n\n"
+                                  "The Media Library will not be affected.\n\n"
+                                  "Are you sure you want to continue?")];
+    [alert addButtonWithTitle:_NS("Cancel")];
+    [alert addButtonWithTitle:_NS("Continue")];
+    [alert beginSheetModalForWindow:[sender window] completionHandler:^(NSModalResponse returnCode) {
+        if (returnCode == NSAlertSecondButtonReturn) {
+            /* reset VLC's config */
+            config_ResetAll();
+            [self resetControls];
 
-- (void)sheetDidEnd:(NSWindow *)o_sheet
-         returnCode:(int)i_return
-        contextInfo:(void *)o_context
-{
-    if (i_return == NSAlertAlternateReturn) {
-        /* reset VLC's config */
-        config_ResetAll(p_intf);
-        [self resetControls];
+            /* force config file creation, since libvlc won't exit normally */
+            config_SaveConfigFile(self->p_intf);
 
-        /* force config file creation, since libvlc won't exit normally */
-        config_SaveConfigFile(p_intf);
+            /* reset OS X defaults */
+            [[VLCMain sharedInstance] resetAndReinitializeUserDefaults];
 
-        /* reset OS X defaults */
-        [[VLCMain sharedInstance] resetAndReinitializeUserDefaults];
+            /* Relaunch now */
+            const char * path = [[[NSBundle mainBundle] executablePath] UTF8String];
 
-        /* Relaunch now */
-        const char * path = [[[NSBundle mainBundle] executablePath] UTF8String];
-
-        /* For some reason we need to fork(), not just execl(), which reports a ENOTSUP then. */
-        if (fork() != 0) {
-            exit(0);
-            return;
+            /* For some reason we need to fork(), not just execl(), which reports a ENOTSUP then. */
+            if (fork() != 0) {
+                exit(0);
+                return;
+            }
+            execl(path, path, NULL);
         }
-        execl(path, path, NULL);
-    }
+    }];
 }
 
 static inline void save_int_list(intf_thread_t * p_intf, id object, const char * name)
@@ -860,7 +846,7 @@ static inline void save_int_list(intf_thread_t * p_intf, id object, const char *
     NSNumber *p_valueobject = (NSNumber *)[[object selectedItem] representedObject];
     if (p_valueobject) {
         assert([p_valueobject isKindOfClass:[NSNumber class]]);
-        config_PutInt(p_intf, name, [p_valueobject intValue]);
+        config_PutInt(name, [p_valueobject intValue]);
     }
 }
 
@@ -869,7 +855,7 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
     NSString *p_stringobject = (NSString *)[[object selectedItem] representedObject];
     if (p_stringobject) {
         assert([p_stringobject isKindOfClass:[NSString class]]);
-        config_PutPsz(p_intf, name, [p_stringobject UTF8String]);
+        config_PutPsz(name, [p_stringobject UTF8String]);
     }
 }
 
@@ -912,18 +898,17 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
         [VLCSimplePrefsController updateRightToLeftSettings];
         [defaults synchronize];
 
-        config_PutInt(p_intf, "metadata-network-access", [_intf_artCheckbox state]);
+        config_PutInt("metadata-network-access", [_intf_artCheckbox state]);
 
-        config_PutInt(p_intf, "macosx-appleremote", [_intf_appleremoteCheckbox state]);
-        config_PutInt(p_intf, "macosx-appleremote-sysvol", [_intf_appleremote_sysvolCheckbox state]);
-        config_PutInt(p_intf, "macosx-statusicon", [_intf_statusIconCheckbox state]);
-        config_PutInt(p_intf, "macosx-mediakeys", [_intf_mediakeysCheckbox state]);
-        config_PutInt(p_intf, "macosx-interfacestyle", [_intf_style_darkButtonCell state]);
+        config_PutInt("macosx-appleremote", [_intf_appleremoteCheckbox state]);
+        config_PutInt("macosx-appleremote-sysvol", [_intf_appleremote_sysvolCheckbox state]);
+        config_PutInt("macosx-statusicon", [_intf_statusIconCheckbox state]);
+        config_PutInt("macosx-mediakeys", [_intf_mediakeysCheckbox state]);
 
         [self changeModule:@"growl" inConfig:@"control" enable:[_intf_enableNotificationsCheckbox state] == NSOnState];
 
         [self changeModule:@"http" inConfig:@"extraintf" enable:[_intf_enableluahttpCheckbox state] == NSOnState];
-        config_PutPsz(p_intf, "http-password", [[_intf_luahttppwdTextField stringValue] UTF8String]);
+        config_PutPsz("http-password", [[_intf_luahttppwdTextField stringValue] UTF8String]);
 
         SaveIntList(_intf_pauseitunesPopup, "macosx-control-itunes");
         SaveIntList(_intf_continueplaybackPopup, "macosx-continue-playback");
@@ -940,15 +925,13 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
      * audio settings *
      ******************/
     if (_audioSettingChanged) {
-        config_PutInt(p_intf, "audio", [_audio_enableCheckbox state]);
-        config_PutInt(p_intf, "volume-save", [_audio_autosavevol_yesButtonCell state]);
+        config_PutInt("audio", [_audio_enableCheckbox state]);
+        config_PutInt("volume-save", [_audio_autosavevol_yesButtonCell state]);
         var_SetBool(p_intf, "volume-save", [_audio_autosavevol_yesButtonCell state]);
         if ([_audio_volTextField isEnabled])
-            config_PutInt(p_intf, "auhal-volume", ([_audio_volTextField intValue] * AOUT_VOLUME_MAX) / 200);
+            config_PutInt("auhal-volume", ([_audio_volTextField intValue] * AOUT_VOLUME_MAX) / 200);
 
-        SaveIntList(_audio_dolbyPopup, "force-dolby-surround");
-
-        config_PutPsz(p_intf, "audio-language", [[_audio_langTextField stringValue] UTF8String]);
+        config_PutPsz("audio-language", [[_audio_langTextField stringValue] UTF8String]);
 
         SaveModuleList(_audio_visualPopup, "audio-visual");
 
@@ -956,12 +939,12 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
         if (module_exists("audioscrobbler")) {
             [_audio_lastCheckbox setEnabled: YES];
             if ([_audio_lastCheckbox state] == NSOnState)
-                config_AddIntf(p_intf, "audioscrobbler");
+                config_AddIntf("audioscrobbler");
             else
-                config_RemoveIntf(p_intf, "audioscrobbler");
+                config_RemoveIntf("audioscrobbler");
 
-            config_PutPsz(p_intf, "lastfm-username", [[_audio_lastuserTextField stringValue] UTF8String]);
-            config_PutPsz(p_intf, "lastfm-password", [[_audio_lastpwdSecureTextField stringValue] UTF8String]);
+            config_PutPsz("lastfm-username", [[_audio_lastuserTextField stringValue] UTF8String]);
+            config_PutPsz("lastfm-password", [[_audio_lastpwdSecureTextField stringValue] UTF8String]);
         }
         else
             [_audio_lastCheckbox setEnabled: NO];
@@ -972,21 +955,21 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
      * video settings *
      ******************/
     if (_videoSettingChanged) {
-        config_PutInt(p_intf, "video", [_video_enableCheckbox state]);
-        config_PutInt(p_intf, "fullscreen", [_video_startInFullscreenCheckbox state]);
-        config_PutInt(p_intf, "video-deco", [_video_videodecoCheckbox state]);
-        config_PutInt(p_intf, "video-on-top", [_video_onTopCheckbox state]);
-        config_PutInt(p_intf, "macosx-black", [_video_blackScreenCheckbox state]);
+        config_PutInt("video", [_video_enableCheckbox state]);
+        config_PutInt("fullscreen", [_video_startInFullscreenCheckbox state]);
+        config_PutInt("video-deco", [_video_videodecoCheckbox state]);
+        config_PutInt("video-on-top", [_video_onTopCheckbox state]);
+        config_PutInt("macosx-black", [_video_blackScreenCheckbox state]);
 
-        config_PutInt(p_intf, "macosx-pause-minimized", [_video_pauseWhenMinimizedCheckbox state]);
+        config_PutInt("macosx-pause-minimized", [_video_pauseWhenMinimizedCheckbox state]);
 
-        config_PutInt(p_intf, "embedded-video", [_video_embeddedCheckbox state]);
-        config_PutInt(p_intf, "macosx-nativefullscreenmode", [_video_nativeFullscreenCheckbox state]);
-        config_PutInt(p_intf, "macosx-vdev", [[_video_devicePopup selectedItem] tag]);
+        config_PutInt("embedded-video", [_video_embeddedCheckbox state]);
+        config_PutInt("macosx-nativefullscreenmode", [_video_nativeFullscreenCheckbox state]);
+        config_PutInt("macosx-vdev", [[_video_devicePopup selectedItem] tag]);
 
-        config_PutPsz(p_intf, "snapshot-path", [[_video_snap_folderTextField stringValue] UTF8String]);
-        config_PutPsz(p_intf, "snapshot-prefix", [[_video_snap_prefixTextField stringValue] UTF8String]);
-        config_PutInt(p_intf, "snapshot-sequential", [_video_snap_seqnumCheckbox state]);
+        config_PutPsz("snapshot-path", [[_video_snap_folderTextField stringValue] UTF8String]);
+        config_PutPsz("snapshot-prefix", [[_video_snap_prefixTextField stringValue] UTF8String]);
+        config_PutInt("snapshot-sequential", [_video_snap_seqnumCheckbox state]);
         SaveStringList(_video_snap_formatPopup, "snapshot-format");
         SaveIntList(_video_deinterlacePopup, "deinterlace");
         SaveStringList(_video_deinterlace_modePopup, "deinterlace-mode");
@@ -997,15 +980,17 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
      * input & codecs settings *
      ***************************/
     if (_inputSettingChanged) {
-        config_PutPsz(p_intf, "input-record-path", [[_input_recordTextField stringValue] UTF8String]);
-        config_PutInt(p_intf, "postproc-q", [_input_postprocTextField intValue]);
-        config_PutInt(p_intf, "skip-frames", [_input_skipFramesCheckbox state]);
+        config_PutPsz("input-record-path", [[_input_recordTextField stringValue] UTF8String]);
+
+        config_PutInt("videotoolbox", [_input_hardwareAccelerationCheckbox state]);
+        config_PutInt("postproc-q", [_input_postprocTextField intValue]);
+        config_PutInt("skip-frames", [_input_skipFramesCheckbox state]);
 
         SaveIntList(_input_aviPopup, "avi-index");
 
         SaveIntList(_input_skipLoopPopup, "avcodec-skiploopfilter");
 
-        #define CaC(name, factor) config_PutInt(p_intf, name, [[_input_cachelevelPopup selectedItem] tag] * factor)
+        #define CaC(name, factor) config_PutInt(name, [[_input_cachelevelPopup selectedItem] tag] * factor)
         if ([[_input_cachelevelPopup selectedItem] tag] == 0) {
             msg_Dbg(p_intf, "Custom chosen, not adjusting cache values");
         } else {
@@ -1023,20 +1008,20 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
      * subtitles settings *
      **********************/
     if (_osdSettingChanged) {
-        config_PutInt(p_intf, "osd", [_osd_osdCheckbox state]);
+        config_PutInt("osd", [_osd_osdCheckbox state]);
 
         if ([_osd_encodingPopup indexOfSelectedItem] >= 0)
             SaveStringList(_osd_encodingPopup, "subsdec-encoding");
         else
-            config_PutPsz(p_intf, "subsdec-encoding", "");
+            config_PutPsz("subsdec-encoding", "");
 
-        config_PutPsz(p_intf, "sub-language", [[_osd_langTextField stringValue] UTF8String]);
+        config_PutPsz("sub-language", [[_osd_langTextField stringValue] UTF8String]);
 
-        config_PutPsz(p_intf, "freetype-font", [[_osd_fontTextField stringValue] UTF8String]);
+        config_PutPsz("freetype-font", [[_osd_fontTextField stringValue] UTF8String]);
         SaveIntList(_osd_font_colorPopup, "freetype-color");
         SaveIntList(_osd_font_sizePopup, "freetype-rel-fontsize");
-        config_PutInt(p_intf, "freetype-opacity", [_osd_opacityTextField intValue] * 255.0 / 100.0 + 0.5);
-        config_PutInt(p_intf, "freetype-bold", [_osd_forceboldCheckbox state]);
+        config_PutInt("freetype-opacity", [_osd_opacityTextField intValue] * 255.0 / 100.0 + 0.5);
+        config_PutInt("freetype-bold", [_osd_forceboldCheckbox state]);
         SaveIntList(_osd_outline_colorPopup, "freetype-outline-color");
         SaveIntList(_osd_outline_thicknessPopup, "freetype-outline-thickness");
         _osdSettingChanged = NO;
@@ -1048,7 +1033,7 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
     if (_hotkeyChanged) {
         NSUInteger hotKeyCount = [_hotkeySettings count];
         for (NSUInteger i = 0; i < hotKeyCount; i++)
-            config_PutPsz(p_intf, [[_hotkeyNames objectAtIndex:i] UTF8String], [[_hotkeySettings objectAtIndex:i]UTF8String]);
+            config_PutPsz([[_hotkeyNames objectAtIndex:i] UTF8String], [[_hotkeySettings objectAtIndex:i]UTF8String]);
         _hotkeyChanged = NO;
     }
 
@@ -1164,7 +1149,7 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
         [_selectFolderPanel setPrompt: _NS("Choose")];
         [_selectFolderPanel beginSheetModalForWindow:self.window completionHandler: ^(NSInteger returnCode) {
             if (returnCode == NSModalResponseOK) {
-                [_video_snap_folderTextField setStringValue: [[_selectFolderPanel URL] path]];
+                [self->_video_snap_folderTextField setStringValue: [[self->_selectFolderPanel URL] path]];
             }
         }];
     }
@@ -1217,7 +1202,7 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
 
 - (IBAction)showFontPicker:(id)sender
 {
-    char * font = config_GetPsz(p_intf, "freetype-font");
+    char * font = config_GetPsz("freetype-font");
     NSString * fontName = font ? toNSStr(font) : nil;
     free(font);
     if (fontName) {
@@ -1240,10 +1225,14 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
     [self osdSettingChanged:self];
 }
 
-- (NSUInteger)validModesForFontPanel:(NSFontPanel *)fontPanel
+// NSFontPanelModeMask is replacing NSUInteger, and should be backwards compatible
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+- (NSFontPanelModeMask)validModesForFontPanel:(NSFontPanel *)fontPanel
 {
     return NSFontPanelFaceModeMask | NSFontPanelCollectionModeMask;
 }
+#pragma clang diagnostic pop
 
 - (IBAction)inputSettingChanged:(id)sender
 {
@@ -1264,8 +1253,8 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
         [_selectFolderPanel beginSheetModalForWindow:self.window completionHandler: ^(NSInteger returnCode) {
             if (returnCode == NSModalResponseOK)
             {
-                [_input_recordTextField setStringValue: [[_selectFolderPanel URL] path]];
-                _inputSettingChanged = YES;
+                [self->_input_recordTextField setStringValue: [[self->_selectFolderPanel URL] path]];
+                self->_inputSettingChanged = YES;
             }
         }];
 
@@ -1307,43 +1296,36 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
 
 - (IBAction)urlHandlerAction:(id)sender
 {
-    NSString *bundleIdentifier = [[NSBundle mainBundle] bundleIdentifier];
-
     if (sender == _input_urlhandlerButton) {
-        NSArray *handlers;
-        NSString *handler;
-        NSString *rawhandler;
-        NSMutableArray *rawHandlers;
-        NSUInteger count;
 
-#define fillUrlHandlerPopup( protocol, object ) \
-        handlers = (__bridge NSArray *)LSCopyAllHandlersForURLScheme(CFSTR( protocol )); \
-        rawHandlers = [[NSMutableArray alloc] init]; \
-        [object removeAllItems]; \
-        count = [handlers count]; \
-        for (NSUInteger x = 0; x < count; x++) { \
-            rawhandler = [handlers objectAtIndex:x]; \
-            handler = [self applicationNameForBundleIdentifier:rawhandler]; \
-            if (handler && ![handler isEqualToString:@""]) { \
-                [object addItemWithTitle:handler]; \
-                [[object lastItem] setImage: [self iconForBundleIdentifier:[handlers objectAtIndex:x]]]; \
-                [rawHandlers addObject: rawhandler]; \
-            } \
-        } \
-        [object selectItemAtIndex: [rawHandlers indexOfObject:(__bridge id)LSCopyDefaultHandlerForURLScheme(CFSTR( protocol ))]];
+        void (^fillUrlHandlerPopup)(NSString*, NSPopUpButton*) = ^void(NSString *protocol, NSPopUpButton *object) {
 
-        fillUrlHandlerPopup( "ftp", _urlhandler_ftpPopup);
-        fillUrlHandlerPopup( "mms", _urlhandler_mmsPopup);
-        fillUrlHandlerPopup( "rtmp", _urlhandler_rtmpPopup);
-        fillUrlHandlerPopup( "rtp", _urlhandler_rtpPopup);
-        fillUrlHandlerPopup( "rtsp", _urlhandler_rtspPopup);
-        fillUrlHandlerPopup( "sftp", _urlhandler_sftpPopup);
-        fillUrlHandlerPopup( "smb", _urlhandler_smbPopup);
-        fillUrlHandlerPopup( "udp", _urlhandler_udpPopup);
+            NSArray *handlers = (__bridge_transfer NSArray *)LSCopyAllHandlersForURLScheme((__bridge CFStringRef)protocol);
+            NSMutableArray *rawHandlers = [[NSMutableArray alloc] init];
+            [object removeAllItems];
+            NSUInteger count = [handlers count];
+            for (NSUInteger x = 0; x < count; x++) {
+                NSString *rawhandler = [handlers objectAtIndex:x];
+                NSString *handler = [self applicationNameForBundleIdentifier:rawhandler];
+                if (handler && ![handler isEqualToString:@""]) {
+                    [object addItemWithTitle:handler];
+                    [[object lastItem] setImage: [self iconForBundleIdentifier:[handlers objectAtIndex:x]]];
+                    [rawHandlers addObject: rawhandler];
+                }
+            }
+            [object selectItemAtIndex: [rawHandlers indexOfObject:(__bridge_transfer id)LSCopyDefaultHandlerForURLScheme((__bridge CFStringRef)protocol)]];
+        };
 
-#undef fillUrlHandlerPopup
+        fillUrlHandlerPopup(@"ftp", _urlhandler_ftpPopup);
+        fillUrlHandlerPopup(@"mms", _urlhandler_mmsPopup);
+        fillUrlHandlerPopup(@"rtmp", _urlhandler_rtmpPopup);
+        fillUrlHandlerPopup(@"rtp", _urlhandler_rtpPopup);
+        fillUrlHandlerPopup(@"rtsp", _urlhandler_rtspPopup);
+        fillUrlHandlerPopup(@"sftp", _urlhandler_sftpPopup);
+        fillUrlHandlerPopup(@"smb", _urlhandler_smbPopup);
+        fillUrlHandlerPopup(@"udp", _urlhandler_udpPopup);
 
-        [NSApp beginSheet:_urlhandler_win modalForWindow:self.window modalDelegate:self didEndSelector:NULL contextInfo:nil];
+        [self.window beginSheet:_urlhandler_win completionHandler:nil];
     } else {
         [_urlhandler_win orderOut:sender];
         [NSApp endSheet:_urlhandler_win];
@@ -1423,7 +1405,7 @@ static inline void save_string_list(intf_thread_t * p_intf, id object, const cha
     [self showSettingsForCategory:_hotkeysView];
 }
 
-- (int)numberOfRowsInTableView:(NSTableView *)aTableView
+- (NSUInteger)numberOfRowsInTableView:(NSTableView *)aTableView
 {
     return [_hotkeySettings count];
 }

@@ -80,13 +80,12 @@ static int vlclua_input_item_info( lua_State *L )
     for( i = 0; i < i_cat; i++ )
     {
         info_category_t *p_category = p_item->pp_categories[i];
-        int i_infos = p_category->i_infos;
-        int j;
+        info_t *p_info;
+
         lua_pushstring( L, p_category->psz_name );
-        lua_createtable( L, 0, i_infos );
-        for( j = 0; j < i_infos; j++ )
+        lua_newtable( L );
+        info_foreach(p_info, &p_category->infos)
         {
-            info_t *p_info = p_category->pp_infos[j];
             lua_pushstring( L, p_info->psz_name );
             lua_pushstring( L, p_info->psz_value );
             lua_settable( L, -3 );
@@ -339,8 +338,8 @@ static int vlclua_input_item_name( lua_State *L )
 
 static int vlclua_input_item_duration( lua_State *L )
 {
-    mtime_t duration = input_item_GetDuration( vlclua_input_item_get_internal( L ) );
-    lua_pushnumber( L, ((double)duration)/1000000. );
+    vlc_tick_t duration = input_item_GetDuration( vlclua_input_item_get_internal( L ) );
+    lua_pushnumber( L, secf_from_vlc_tick(duration) );
     return 1;
 }
 

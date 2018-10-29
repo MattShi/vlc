@@ -17,7 +17,6 @@ $Id$
  * access_output_srt: SRT (Secure Reliable Transport) access_output module
  * access_output_udp: UDP Network access_output module
  * access_qtsound: Quicktime Audio Capture
- * access_realrtsp: Real RTSP access
  * access_srt: SRT(Secure Reliable Transport) access module
  * access_wasapi: WASAPI audio input
  * accesstweaks: access control tweaking module (dev tool)
@@ -46,7 +45,6 @@ $Id$
  * aribcam: ARIB STD-B25 decoder/virtual CAM
  * aribsub: ARIB subtitles decoder
  * asf: ASF demuxer
- * attachment: Attachment access module
  * au: AU file demuxer
  * audio_format: helper module for audio transcoding
  * audiobargraph_a: audiobargraph audio plugin
@@ -60,6 +58,7 @@ $Id$
  * avcodec: libavcodec audio/video decoder
  * avformat: libavformat demuxer
  * avi: AVI file stream demuxer
+ * av1: AV1 packetizer
  * avio: Access and Stream output module using libavformat network
  * ball: Augmented reality ball video filter module
  * bandlimited_resampler: Bandlimited interpolation audio resampler
@@ -185,7 +184,6 @@ $Id$
  * hqdn3d: High Quality denoising filter
  * http: HTTP Network access module
  * https: HTTP/TLS access module for HTTP 2.0 support
- * i420_10_p010: I420 to NV12 in 10bits conversion, aka IA0L->P010
  * i420_nv12: planar YUV to semi-planar YUV conversion functions
  * i420_rgb: planar YUV to packed RGB conversion functions
  * i420_rgb_mmx: MMX accelerated version of i420_rgb
@@ -210,6 +208,7 @@ $Id$
  * karaoke: simple karaoke audio filter
  * kate: kate text bitstream decoder
  * keychain: Keystore for iOS, Mac OS X and tvOS
+ * kms: Kernel mode setting video output
  * kva: OS/2 video output
  * kwallet: store secrets via KDE Kwallet
  * libass: Subtitle renderers using libass
@@ -219,7 +218,6 @@ $Id$
  * linsys_sdi: Linsys SDI cards access module
  * lirc: Linux infrared control module
  * live555: rtp demux based on liveMedia (live555.com)
- * logger: file logger plugin
  * logo: video filter to put a logo on the video
  * lpcm: LPCM decoder
  * lua: Lua scripting inteface
@@ -229,6 +227,7 @@ $Id$
  * marq: Overlays a marquee on the video
  * mediacodec: Android Jelly Bean MediaCodec decoder module
  * mediadirs: Picture/Music/Video user directories as service discoveries
+ * medialibrary: Media collection management
  * memory_keystore: store secrets in memory
  * mft: Media Foundation Transform audio/video decoder
  * microdns: mDNS services discovery
@@ -282,7 +281,7 @@ $Id$
  * opus: a opus audio decoder/packetizer/encoder using the libopus library
  * os2drive: service discovery for OS/2 drives
  * oss: audio output module using the OSS /dev/dsp interface
- * osx_notifications: announce currently playing stream to OS X/Growl
+ * osx_notifications: announce currently playing stream to OS X
  * packetizer_a52: A/52 basic parser/packetizer
  * packetizer_avparser: libavcodec packetizer
  * packetizer_copy: Simple copy packetizer
@@ -290,6 +289,7 @@ $Id$
  * packetizer_flac: FLAC audio packetizer
  * packetizer_h264: H264 video packetizer
  * packetizer_hevc: H.265/HEVC video packetizer
+ * packetizer_mjpeg: MJPEG packetizer
  * packetizer_mlp: MLP/TrueHD audio packetizer
  * packetizer_mpeg4audio: MPEG4 audio packetizer
  * packetizer_mpeg4video: MPEG4 video packetizer
@@ -319,7 +319,6 @@ $Id$
  * rawvid: raw video input module for vlc
  * rawvideo: Pseudo audio-decoder for raw video
  * rdp: Remote Desktop view only access
- * real: partial Real audio/video demuxer
  * record: record any stream instantly
  * remap: audio channel remapping filter
  * remoteosd: Remote-OSD over VNC
@@ -342,6 +341,7 @@ $Id$
  * scte18: SCTE-18/Emergency Alert Messaging for Cable decoder
  * scte27: SCTE-27/Digicipher subtitles decoder
  * sd_journal: logger output to SystemD journal
+ * sdiout: SDI stream output
  * sdl_image: SDL-based image decoder
  * sdp: SDP fake access
  * secret: store secrets via Gnome libsecret
@@ -355,7 +355,8 @@ $Id$
  * simple_channel_mixer: channel mixer
  * skins2: Skinnable interface, new generation
  * skiptags: APE & ID3 tags-skipping stream filter
- * smb: SMB shares access module
+ * smb2: SMB2/3 access module
+ * smbc: Samba / libsmbclient input
  * smf: Standard MIDI file demuxer
  * sndio: OpenBSD sndio audio output
  * soxr: SoX Resampler library audio filter
@@ -420,6 +421,7 @@ $Id$
  * udp: UDP Network access module
  * ugly_resampler: Ugly audio resampler
  * uleaddvaudio: codec for DV Audio from Ulead
+ * unc: Microsoft Windows networking / Universal Naming Convention
  * upnp: libupnp UPNP service discovery
  * v4l2: Video 4 Linux 2 input module
  * vaapi: VAAPI hardware-accelerated decoding with vout backend
@@ -454,6 +456,7 @@ $Id$
  * wav: Wav demuxer
  * wave: Wave video effect
  * waveout: simple audio output module for Windows
+ * wdummy: dummy window provider
  * webvtt: WEBVTT subtitles decoder, encoder and demuxer
  * wgl: WGL extension for OpenGL
  * win_hotkeys: module to catch hotkeys when application doesn't have the focus
@@ -462,6 +465,7 @@ $Id$
  * wingdi: WIN 32 / WIN CE GDI video output
  * winhibit: Win32 screensaver inhibition
  * winstore: Windows Store App audio output
+ * wl_idle_inhibit: Wayland idle inhibitor
  * wl_screenshooter: Wayland screen capture input
  * wl_shell: Wayland shell surface window provider
  * wl_shm: Wayland shared memory video output

@@ -96,7 +96,7 @@ int OpenIntf (vlc_object_t *p_this)
             [VLCApplication sharedApplication];
             [VLCMain sharedInstance];
 
-            [NSBundle loadNibNamed:@"MainMenu" owner:[[VLCMain sharedInstance] mainMenu]];
+            [[NSBundle mainBundle] loadNibNamed:@"MainMenu" owner:[[VLCMain sharedInstance] mainMenu] topLevelObjects:nil];
             [[[VLCMain sharedInstance] mainWindow] makeKeyAndOrderFront:nil];
 
             msg_Dbg(p_intf, "Finished loading macosx interface");
@@ -114,16 +114,6 @@ void CloseIntf (vlc_object_t *p_this)
         msg_Dbg(p_this, "Closing macosx interface");
         [[VLCMain sharedInstance] applicationWillTerminate:nil];
         [VLCMain killInstance];
-
-        /*
-         * Spinning the event loop here is important to help cleaning up all objects which should be
-         * destroyed here. Its possible that main thread selectors (which hold a strong reference
-         * to the target object), are still in the queue (e.g. fired from variable callback).
-         * Thus make sure those are still dispatched and the references to the targets are
-         * cleared, to allow the objects to be released.
-         */
-        msg_Dbg(p_this, "Spin the event loop to clean up the interface");
-        [[NSRunLoop mainRunLoop] runUntilDate:[NSDate date]];
 
         p_interface_thread = nil;
     }
@@ -241,13 +231,13 @@ static VLCMain *sharedInstance = nil;
         _mainmenu = [[VLCMainMenu alloc] init];
         _statusBarIcon = [[VLCStatusBarIcon  alloc] init];
 
-        _voutController = [[VLCVoutWindowController alloc] init];
+        _voutProvider = [[VLCVideoOutputProvider alloc] init];
         _playlist = [[VLCPlaylist alloc] init];
 
         _mainWindowController = [[NSWindowController alloc] initWithWindowNibName:@"MainWindow"];
 
-        var_AddCallback(p_intf->obj.libvlc, "intf-toggle-fscontrol", ShowController, (__bridge void *)self);
-        var_AddCallback(p_intf->obj.libvlc, "intf-show", ShowController, (__bridge void *)self);
+        var_AddCallback(pl_Get(p_intf), "intf-toggle-fscontrol", ShowController, (__bridge void *)self);
+        var_AddCallback(pl_Get(p_intf), "intf-show", ShowController, (__bridge void *)self);
 
         // Load them here already to apply stored profiles
         _videoEffectsPanel = [[VLCVideoEffectsWindowController alloc] init];
@@ -338,6 +328,7 @@ static VLCMain *sharedInstance = nil;
     b_intf_terminating = true;
 
     [_input_manager onPlaybackHasEnded:nil];
+    [_input_manager deinit];
 
     if (notification == nil)
         [[NSNotificationCenter defaultCenter] postNotificationName: NSApplicationWillTerminateNotification object: nil];
@@ -349,17 +340,17 @@ static VLCMain *sharedInstance = nil;
     [[self audioEffectsPanel] saveCurrentProfileAtTerminate];
 
     /* Save some interface state in configuration, at module quit */
-    config_PutInt(p_intf, "random", var_GetBool(p_playlist, "random"));
-    config_PutInt(p_intf, "loop", var_GetBool(p_playlist, "loop"));
-    config_PutInt(p_intf, "repeat", var_GetBool(p_playlist, "repeat"));
+    config_PutInt("random", var_GetBool(p_playlist, "random"));
+    config_PutInt("loop", var_GetBool(p_playlist, "loop"));
+    config_PutInt("repeat", var_GetBool(p_playlist, "repeat"));
 
-    var_DelCallback(p_intf->obj.libvlc, "intf-toggle-fscontrol", ShowController, (__bridge void *)self);
-    var_DelCallback(p_intf->obj.libvlc, "intf-show", ShowController, (__bridge void *)self);
+    var_DelCallback(pl_Get(p_intf), "intf-toggle-fscontrol", ShowController, (__bridge void *)self);
+    var_DelCallback(pl_Get(p_intf), "intf-show", ShowController, (__bridge void *)self);
 
     [[NSNotificationCenter defaultCenter] removeObserver: self];
 
     // closes all open vouts
-    _voutController = nil;
+    _voutProvider = nil;
 
     /* write cached user defaults to disk */
     [[NSUserDefaults standardUserDefaults] synchronize];

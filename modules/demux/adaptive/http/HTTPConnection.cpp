@@ -24,7 +24,8 @@
 #include "HTTPConnection.hpp"
 #include "ConnectionParams.hpp"
 #include "AuthStorage.hpp"
-#include "Sockets.hpp"
+#include "Transport.hpp"
+#include "../tools/Helper.h"
 
 #include <cstdio>
 #include <sstream>
@@ -65,10 +66,10 @@ const std::string & AbstractConnection::getContentType() const
 }
 
 HTTPConnection::HTTPConnection(vlc_object_t *p_object_, AuthStorage *auth,
-                               Socket *socket_, const ConnectionParams &proxy, bool persistent)
+                               Transport *socket_, const ConnectionParams &proxy, bool persistent)
     : AbstractConnection( p_object_ )
 {
-    socket = socket_;
+    transport = socket_;
     psz_useragent = var_InheritString(p_object_, "http-user-agent");
     queryOk = false;
     retries = 0;
@@ -83,12 +84,12 @@ HTTPConnection::HTTPConnection(vlc_object_t *p_object_, AuthStorage *auth,
 HTTPConnection::~HTTPConnection()
 {
     free(psz_useragent);
-    delete socket;
+    delete transport;
 }
 
 bool HTTPConnection::canReuse(const ConnectionParams &params_) const
 {
-    if( !available )
+    if( !available || params_.usesAccess() )
         return false;
 
     char *psz_proxy_url = vlc_getProxyUrl(params_.getUrl().c_str());
@@ -108,16 +109,16 @@ bool HTTPConnection::canReuse(const ConnectionParams &params_) const
 bool HTTPConnection::connect()
 {
     if(proxyparams.getHostname().empty())
-        return socket->connect(p_object, params.getHostname().c_str(),
+        return transport->connect(p_object, params.getHostname().c_str(),
                                          params.getPort());
     else
-        return socket->connect(p_object, proxyparams.getHostname().c_str(),
+        return transport->connect(p_object, proxyparams.getHostname().c_str(),
                                          proxyparams.getPort());
 }
 
 bool HTTPConnection::connected() const
 {
-    return socket->connected();
+    return transport->connected();
 }
 
 void HTTPConnection::disconnect()
@@ -129,10 +130,11 @@ void HTTPConnection::disconnect()
     chunkLength = 0;
     bytesRange = BytesRange();
     contentType = std::string();
-    socket->disconnect();
+    transport->disconnect();
 }
 
-int HTTPConnection::request(const std::string &path, const BytesRange &range)
+enum RequestStatus
+    HTTPConnection::request(const std::string &path, const BytesRange &range)
 {
     queryOk = false;
     chunked = false;
@@ -155,7 +157,7 @@ int HTTPConnection::request(const std::string &path, const BytesRange &range)
     else querypath = path;
 
     if(!connected() && ( params.getHostname().empty() || !connect() ))
-        return VLC_EGENERIC;
+        return RequestStatus::GenericError;
 
     bytesRange = range;
     if(range.isValid() && range.getEndByte() > 0)
@@ -168,28 +170,28 @@ int HTTPConnection::request(const std::string &path, const BytesRange &range)
 
     if(!send( header ))
     {
-        socket->disconnect();
+        transport->disconnect();
         if(!connectionClose)
         {
             /* server closed connection pipeline after last req. need new */
             connectionClose = true;
             return request(path, range);
         }
-        return VLC_EGENERIC;
+        return RequestStatus::GenericError;
     }
 
-    int i_ret = parseReply();
-    if(i_ret == VLC_SUCCESS)
+    enum RequestStatus status = parseReply();
+    if(status == RequestStatus::Success)
     {
         queryOk = true;
     }
-    else if(i_ret == VLC_ETIMEOUT) /* redir */
+    else if(status == RequestStatus::Redirection)
     {
-        socket->disconnect();
+        transport->disconnect();
     }
-    else if(i_ret == VLC_EGENERIC)
+    else if(status == RequestStatus::GenericError)
     {
-        socket->disconnect();
+        transport->disconnect();
         if(!connectionClose)
         {
             connectionClose = true;
@@ -197,7 +199,7 @@ int HTTPConnection::request(const std::string &path, const BytesRange &range)
         }
     }
 
-    return i_ret;
+    return status;
 }
 
 ssize_t HTTPConnection::read(void *p_buffer, size_t len)
@@ -219,14 +221,14 @@ ssize_t HTTPConnection::read(void *p_buffer, size_t len)
         len = toRead;
 
     ssize_t ret = ( chunked ) ? readChunk(p_buffer, len)
-                              : socket->read(p_object, p_buffer, len);
+                              : transport->read(p_buffer, len);
     if(ret >= 0)
         bytesRead += ret;
 
     if(ret < 0 || (size_t)ret < len || /* set EOF */
        (contentLength == bytesRead && connectionClose))
     {
-        socket->disconnect();
+        transport->disconnect();
         return ret;
     }
 
@@ -240,20 +242,21 @@ bool HTTPConnection::send(const std::string &data)
 
 bool HTTPConnection::send(const void *buf, size_t size)
 {
-    return socket->send(p_object, buf, size);
+    return transport->send(buf, size);
 }
 
-int HTTPConnection::parseReply()
+enum RequestStatus
+    HTTPConnection::parseReply()
 {
     std::string statusline = readLine();
 
     if(statusline.empty())
-        return VLC_EGENERIC;
+        return RequestStatus::GenericError;
 
     if (statusline.compare(0, 9, "HTTP/1.1 ")!=0)
     {
         if(statusline.compare(0, 9, "HTTP/1.0 ")!=0)
-            return VLC_ENOOBJ;
+            return RequestStatus::NotFound;
         else
             connectionClose = true;
     }
@@ -286,15 +289,15 @@ int HTTPConnection::parseReply()
        !locationparams.getUrl().empty())
     {
         msg_Info(p_object, "%d redirection to %s", replycode, locationparams.getUrl().c_str());
-        return VLC_ETIMEOUT;
+        return RequestStatus::Redirection;
     }
     else if (replycode != 200 && replycode != 206)
     {
         msg_Err(p_object, "Failed reading %s: %s", params.getUrl().c_str(), statusline.c_str());
-        return VLC_ENOOBJ;
+        return RequestStatus::NotFound;
     }
 
-    return VLC_SUCCESS;
+    return RequestStatus::Success;
 }
 
 ssize_t HTTPConnection::readChunk(void *p_buffer, size_t len)
@@ -319,7 +322,7 @@ ssize_t HTTPConnection::readChunk(void *p_buffer, size_t len)
             if(toread > chunkLength)
                 toread = chunkLength;
 
-            ssize_t in = socket->read(p_object, &((uint8_t*)p_buffer)[copied], toread);
+            ssize_t in = transport->read(&((uint8_t*)p_buffer)[copied], toread);
             if(in < 0)
             {
                 return (copied == 0) ? in : copied;
@@ -336,7 +339,7 @@ ssize_t HTTPConnection::readChunk(void *p_buffer, size_t len)
         if(chunkLength == 0)
         {
             char crlf[2];
-            ssize_t in = socket->read(p_object, &crlf, 2);
+            ssize_t in = transport->read(&crlf, 2);
             if(in < 2 || memcmp(crlf, "\r\n", 2))
                 return (copied == 0) ? -1 : copied;
         }
@@ -347,7 +350,7 @@ ssize_t HTTPConnection::readChunk(void *p_buffer, size_t len)
 
 std::string HTTPConnection::readLine()
 {
-    return socket->readline(p_object);
+    return transport->readline();
 }
 
 void HTTPConnection::setUsed( bool b )
@@ -355,7 +358,7 @@ void HTTPConnection::setUsed( bool b )
     available = !b;
     if(available)
     {
-        if(!connectionClose && contentLength == bytesRead )
+        if(!connectionClose && contentLength == bytesRead && (!chunked || chunked_eof))
         {
             queryOk = false;
             bytesRead = 0;
@@ -370,7 +373,7 @@ void HTTPConnection::setUsed( bool b )
 void HTTPConnection::onHeader(const std::string &key,
                               const std::string &value)
 {
-    if(key == "Content-Length")
+    if(Helper::icaseEquals(key, "Content-Length"))
     {
         std::istringstream ss(value);
         ss.imbue(std::locale("C"));
@@ -378,19 +381,21 @@ void HTTPConnection::onHeader(const std::string &key,
         ss >> length;
         contentLength = length;
     }
-    else if (key == "Connection" && value =="close")
+    else if (Helper::icaseEquals(key, "Connection") &&
+             Helper::icaseEquals(value, "close"))
     {
         connectionClose = true;
     }
-    else if (key == "Transfer-Encoding" && value == "chunked")
+    else if (Helper::icaseEquals(key, "Transfer-Encoding") &&
+             Helper::icaseEquals(value, "chunked"))
     {
         chunked = true;
     }
-    else if(key == "Content-Type")
+    else if(Helper::icaseEquals(key, "Content-Type"))
     {
         contentType = value;
     }
-    else if(key == "Location")
+    else if(Helper::icaseEquals(key, "Location"))
     {
         locationparams = ConnectionParams();
         ConnectionParams loc = ConnectionParams( value );
@@ -401,7 +406,7 @@ void HTTPConnection::onHeader(const std::string &key,
         }
         else locationparams = loc;
     }
-    else if(key == "Set-Cookie" && authStorage)
+    else if(Helper::icaseEquals(key, "Set-Cookie") && authStorage)
     {
         authStorage->addCookie( value, params );
     }
@@ -478,12 +483,13 @@ void StreamUrlConnection::reset()
     bytesRange = BytesRange();
 }
 
-bool StreamUrlConnection::canReuse(const ConnectionParams &) const
+bool StreamUrlConnection::canReuse(const ConnectionParams &params) const
 {
-    return available;
+    return available && params.usesAccess();
 }
 
-int StreamUrlConnection::request(const std::string &path, const BytesRange &range)
+enum RequestStatus
+    StreamUrlConnection::request(const std::string &path, const BytesRange &range)
 {
     reset();
 
@@ -495,7 +501,7 @@ int StreamUrlConnection::request(const std::string &path, const BytesRange &rang
 
     p_streamurl = vlc_stream_NewURL(p_object, params.getUrl().c_str());
     if(!p_streamurl)
-        return VLC_EGENERIC;
+        return RequestStatus::GenericError;
 
     char *psz_type = stream_ContentType(p_streamurl);
     if(psz_type)
@@ -513,7 +519,7 @@ int StreamUrlConnection::request(const std::string &path, const BytesRange &rang
         if(vlc_stream_Seek(p_streamurl, range.getStartByte()) != VLC_SUCCESS)
         {
             vlc_stream_Delete(p_streamurl);
-            return VLC_EGENERIC;
+            return RequestStatus::GenericError;
         }
         bytesRange = range;
         contentLength = range.getEndByte() - range.getStartByte() + 1;
@@ -525,7 +531,7 @@ int StreamUrlConnection::request(const std::string &path, const BytesRange &rang
         if(!range.isValid() || contentLength > (size_t) i_size)
             contentLength = (size_t) i_size;
     }
-    return VLC_SUCCESS;
+    return RequestStatus::Success;
 }
 
 ssize_t StreamUrlConnection::read(void *p_buffer, size_t len)
@@ -564,16 +570,17 @@ void StreamUrlConnection::setUsed( bool b )
        reset();
 }
 
-ConnectionFactory::ConnectionFactory( AuthStorage *auth )
+NativeConnectionFactory::NativeConnectionFactory( AuthStorage *auth )
+    : AbstractConnectionFactory()
 {
     authStorage = auth;
 }
 
-ConnectionFactory::~ConnectionFactory()
+NativeConnectionFactory::~NativeConnectionFactory()
 {
 }
 
-AbstractConnection * ConnectionFactory::createConnection(vlc_object_t *p_object,
+AbstractConnection * NativeConnectionFactory::createConnection(vlc_object_t *p_object,
                                                          const ConnectionParams &params)
 {
     if((params.getScheme() != "http" && params.getScheme() != "https") || params.getHostname().empty())
@@ -591,15 +598,14 @@ AbstractConnection * ConnectionFactory::createConnection(vlc_object_t *p_object,
     }
     else scheme = params.getScheme();
 
-    const int sockettype = (params.getScheme() == "https") ? TLSSocket::TLS : Socket::REGULAR;
-    Socket *socket = (sockettype == TLSSocket::TLS) ? new (std::nothrow) TLSSocket()
-                                                    : new (std::nothrow) Socket();
+    const bool b_secure = (params.getScheme() == "https");
+    Transport *socket = new (std::nothrow) Transport(b_secure);
     if(!socket)
         return NULL;
 
     /* disable pipelined tls until we have ticket/resume session support */
     HTTPConnection *conn = new (std::nothrow)
-            HTTPConnection(p_object, authStorage, socket, proxy, sockettype != TLSSocket::TLS);
+            HTTPConnection(p_object, authStorage, socket, proxy, !b_secure);
     if(!conn)
     {
         delete socket;
@@ -610,7 +616,7 @@ AbstractConnection * ConnectionFactory::createConnection(vlc_object_t *p_object,
 }
 
 StreamUrlConnectionFactory::StreamUrlConnectionFactory()
-    : ConnectionFactory( NULL )
+    : AbstractConnectionFactory()
 {
 
 }
@@ -619,4 +625,32 @@ AbstractConnection * StreamUrlConnectionFactory::createConnection(vlc_object_t *
                                                                   const ConnectionParams &)
 {
     return new (std::nothrow) StreamUrlConnection(p_object);
+}
+
+ConnectionFactory::ConnectionFactory( AuthStorage *authstorage )
+{
+    native = new NativeConnectionFactory( authstorage );
+    streamurl = new StreamUrlConnectionFactory();
+}
+
+ConnectionFactory::~ConnectionFactory()
+{
+    delete native;
+    delete streamurl;
+}
+
+AbstractConnection * ConnectionFactory::createConnection(vlc_object_t *p_object,
+                                                         const ConnectionParams &params)
+{
+    bool b_streamurl = var_InheritBool(p_object, "adaptive-use-access");
+    if(!b_streamurl && !params.usesAccess())
+    {
+        return native->createConnection(p_object, params);
+    }
+    else
+    {
+        ConnectionParams paramsaccess = params;
+        paramsaccess.setUseAccess(true);
+        return streamurl->createConnection(p_object, paramsaccess);
+    }
 }

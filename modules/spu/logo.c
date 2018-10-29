@@ -94,7 +94,7 @@ vlc_module_begin ()
     set_shortname( N_("Logo overlay") )
     add_shortcut( "logo" )
 
-    add_loadfile( CFG_PREFIX "file", NULL, FILE_TEXT, FILE_LONGTEXT, false )
+    add_loadfile(CFG_PREFIX "file", NULL, FILE_TEXT, FILE_LONGTEXT)
     add_integer( CFG_PREFIX "x", -1, POSX_TEXT, POSX_LONGTEXT, true )
     add_integer( CFG_PREFIX "y", -1, POSY_TEXT, POSY_LONGTEXT, true )
     /* default to 1000 ms per image, continuously cycle through them */
@@ -139,7 +139,7 @@ typedef struct
     unsigned int i_count;   /* the number of logo images to be displayed */
 
     int i_repeat;         /* how often to repeat the images, image time in ms */
-    mtime_t i_next_pic;     /* when to bring up a new logo image */
+    vlc_tick_t i_next_pic;     /* when to bring up a new logo image */
 
     unsigned int i_counter; /* index into the list of logo images */
 
@@ -151,7 +151,7 @@ typedef struct
 /**
  * Private logo data holder
  */
-struct filter_sys_t
+typedef struct
 {
     filter_t *p_blend;
 
@@ -169,7 +169,7 @@ struct filter_sys_t
 
     /* */
     bool b_mouse_grab;
-};
+} filter_sys_t;
 
 static const char *const ppsz_filter_options[] = {
     "file", "x", "y", "delay", "repeat", "opacity", "position", NULL
@@ -187,7 +187,7 @@ static const char *const ppsz_filter_callbacks[] = {
 
 static int OpenCommon( vlc_object_t *, bool b_sub );
 
-static subpicture_t *FilterSub( filter_t *, mtime_t );
+static subpicture_t *FilterSub( filter_t *, vlc_tick_t );
 static picture_t    *FilterVideo( filter_t *, picture_t * );
 
 static int Mouse( filter_t *, vlc_mouse_t *, const vlc_mouse_t *, const vlc_mouse_t * );
@@ -197,7 +197,7 @@ static int LogoCallback( vlc_object_t *, char const *,
 
 static void LogoListLoad( vlc_object_t *, logo_list_t *, const char * );
 static void LogoListUnload( logo_list_t * );
-static logo_t *LogoListNext( logo_list_t *p_list, mtime_t i_date );
+static logo_t *LogoListNext( logo_list_t *p_list, vlc_tick_t i_date );
 static logo_t *LogoListCurrent( logo_list_t *p_list );
 
 /**
@@ -330,7 +330,7 @@ static void Close( vlc_object_t *p_this )
 /**
  * Sub source
  */
-static subpicture_t *FilterSub( filter_t *p_filter, mtime_t date )
+static subpicture_t *FilterSub( filter_t *p_filter, vlc_tick_t date )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
     logo_list_t *p_list = &p_sys->list;
@@ -730,14 +730,14 @@ static void LogoListUnload( logo_list_t *p_list )
 /**
  * Go to the next logo and return its pointer.
  */
-static logo_t *LogoListNext( logo_list_t *p_list, mtime_t i_date )
+static logo_t *LogoListNext( logo_list_t *p_list, vlc_tick_t i_date )
 {
     p_list->i_counter = ( p_list->i_counter + 1 ) % p_list->i_count;
 
     logo_t *p_logo = LogoListCurrent( p_list );
 
-    p_list->i_next_pic = i_date + ( p_logo->i_delay != -1 ?
-                          p_logo->i_delay : p_list->i_delay ) * 1000;
+    p_list->i_next_pic = i_date + VLC_TICK_FROM_MS( p_logo->i_delay != -1 ?
+                          p_logo->i_delay : p_list->i_delay );
     return p_logo;
 }
 /**

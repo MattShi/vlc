@@ -44,9 +44,9 @@ void playlist_Unlock( playlist_t *pl )
     vlc_mutex_unlock( &pl_priv(pl)->lock );
 }
 
-void playlist_AssertLocked( playlist_t *pl )
+bool playlist_Locked( const playlist_t *pl )
 {
-    vlc_assert_locked( &pl_priv(pl)->lock );
+    return vlc_mutex_marked( &pl_priv(pl)->lock );
 }
 
 static void playlist_vaControl( playlist_t *p_playlist, int i_query,

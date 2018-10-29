@@ -23,13 +23,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
  *****************************************************************************/
 
-#import "PXSourceList.h"
 #import "VLCPLModel.h"
 #import "VLCPlaylistView.h"
 
 @interface VLCPlaylist : NSResponder<NSOutlineViewDelegate>
 
-@property (readwrite, weak) IBOutlet NSMenu *playlistMenu;
+@property (readwrite, strong) IBOutlet NSMenu *playlistMenu;
 @property (readwrite, weak) IBOutlet NSMenuItem *playPlaylistMenuItem;
 @property (readwrite, weak) IBOutlet NSMenuItem *deletePlaylistMenuItem;
 @property (readwrite, weak) IBOutlet NSMenuItem *infoPlaylistMenuItem;

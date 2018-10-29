@@ -28,7 +28,7 @@
 #include "HTTPConnectionManager.h"
 #include "HTTPConnection.hpp"
 #include "ConnectionParams.hpp"
-#include "Sockets.hpp"
+#include "Transport.hpp"
 #include "Downloader.hpp"
 #include <vlc_url.h>
 #include <vlc_http.h>
@@ -47,7 +47,7 @@ AbstractConnectionManager::~AbstractConnectionManager()
 
 }
 
-void AbstractConnectionManager::updateDownloadRate(const adaptive::ID &sourceid, size_t size, mtime_t time)
+void AbstractConnectionManager::updateDownloadRate(const adaptive::ID &sourceid, size_t size, vlc_tick_t time)
 {
     if(rateObserver)
         rateObserver->updateDownloadRate(sourceid, size, time);
@@ -58,7 +58,7 @@ void AbstractConnectionManager::setDownloadRateObserver(IDownloadRateObserver *o
     rateObserver = obs;
 }
 
-HTTPConnectionManager::HTTPConnectionManager    (vlc_object_t *p_object_, ConnectionFactory *factory_)
+HTTPConnectionManager::HTTPConnectionManager    (vlc_object_t *p_object_, AbstractConnectionFactory *factory_)
     : AbstractConnectionManager( p_object_ )
 {
     vlc_mutex_init(&lock);
@@ -73,10 +73,7 @@ HTTPConnectionManager::HTTPConnectionManager    (vlc_object_t *p_object_, AuthSt
     vlc_mutex_init(&lock);
     downloader = new (std::nothrow) Downloader();
     downloader->start();
-    if(var_InheritBool(p_object, "adaptive-use-access"))
-        factory = new (std::nothrow) StreamUrlConnectionFactory();
-    else
-        factory = new (std::nothrow) ConnectionFactory( storage );
+    factory = new ConnectionFactory(storage);
 }
 
 HTTPConnectionManager::~HTTPConnectionManager   ()

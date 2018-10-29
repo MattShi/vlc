@@ -38,7 +38,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#ifdef HAVE_SYS_SOCKET_H
 #include <sys/socket.h>
+#endif
 
 #include <vlc_common.h>
 #include <vlc_fs.h>
@@ -61,7 +63,7 @@ int vlc_open (const char *filename, int flags, ...)
     va_end (ap);
 
 #ifdef O_CLOEXEC
-    return open(filename, flags, mode | O_CLOEXEC);
+    return open(filename, flags | O_CLOEXEC, mode);
 #else
     int fd = open(filename, flags, mode);
     if (fd != -1)
@@ -81,7 +83,7 @@ int vlc_openat (int dir, const char *filename, int flags, ...)
     va_end (ap);
 
 #ifdef HAVE_OPENAT
-    return openat(dir, filename, flags, mode | O_CLOEXEC);
+    return openat(dir, filename, flags | O_CLOEXEC, mode);
 #else
     VLC_UNUSED (dir);
     VLC_UNUSED (filename);

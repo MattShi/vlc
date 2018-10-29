@@ -104,7 +104,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
     GLint oneplane_texfmt, oneplane16_texfmt,
           twoplanes_texfmt, twoplanes16_texfmt;
 
-    if (HasExtension(tc->glexts, "GL_ARB_texture_rg"))
+    if (vlc_gl_StrHasToken(tc->glexts, "GL_ARB_texture_rg"))
     {
         oneplane_texfmt = GL_RED;
         oneplane16_texfmt = GL_R16;
@@ -127,9 +127,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
             return VLC_EGENERIC;
 
         /* Do a bit shift if samples are stored on LSB */
-        /* This is a hackish way to detect endianness. FIXME: Add bit order
-         * in vlc_chroma_description_t */
-        if ((chroma >> 24) == 'L')
+        if (chroma != VLC_CODEC_P010)
             yuv_range_correction = (float)((1 << 16) - 1)
                                  / ((1 << desc->pixel_bits) - 1);
     }
@@ -178,7 +176,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
                 GL_UNSIGNED_BYTE
             };
             tc->texs[1] = (struct opengl_tex_cfg) {
-                { 1, 2 }, { 1, 4 }, twoplanes_texfmt, twoplanes_texfmt,
+                { 1, 2 }, { 1, 2 }, twoplanes_texfmt, twoplanes_texfmt,
                 GL_UNSIGNED_BYTE
             };
         }
@@ -193,7 +191,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
                 GL_UNSIGNED_SHORT
             };
             tc->texs[1] = (struct opengl_tex_cfg) {
-                { 1, 2 }, { 1, 4 }, twoplanes16_texfmt, twoplanes_texfmt,
+                { 1, 2 }, { 1, 2 }, twoplanes16_texfmt, twoplanes_texfmt,
                 GL_UNSIGNED_SHORT
             };
         }
@@ -216,7 +214,7 @@ tc_yuv_base_init(opengl_tex_converter_t *tc, GLenum tex_target,
         /* Y1 U Y2 V fits in R G B A */
         tc->tex_count = 1;
         tc->texs[0] = (struct opengl_tex_cfg) {
-            { 1, 2 }, { 1, 2 }, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE
+            { 1, 2 }, { 1, 1 }, GL_RGBA, GL_RGBA, GL_UNSIGNED_BYTE
         };
 
         /*
@@ -539,7 +537,7 @@ static struct pl_color_space pl_color_space_from_video_format(const video_format
     // As a fallback value for the signal peak, we can also use the mastering
     // metadata's luminance information
     if (!sig_peak)
-        sig_peak = fmt->mastering.max_luminance / PL_COLOR_REF_WHITE;
+        sig_peak = fmt->mastering.max_luminance / (10000.0 * PL_COLOR_REF_WHITE);
 
     // Sanitize the sig_peak/sig_avg, because of buggy or low quality tagging
     // that's sadly common in lots of typical sources

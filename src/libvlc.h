@@ -25,6 +25,8 @@
 #ifndef LIBVLC_LIBVLC_H
 # define LIBVLC_LIBVLC_H 1
 
+#include <vlc_input_item.h>
+
 extern const char psz_vlc_changeset[];
 
 typedef struct variable_t variable_t;
@@ -37,7 +39,7 @@ void system_Configure ( libvlc_int_t *, int, const char *const [] );
 #if defined(_WIN32) || defined(__OS2__)
 void system_End(void);
 #ifndef __OS2__
-size_t EnumClockSource( vlc_object_t *, const char *, char ***, char *** );
+int EnumClockSource( const char *, char ***, char *** );
 #endif
 #endif
 void vlc_CPU_dump(vlc_object_t *);
@@ -56,10 +58,19 @@ void vlc_threads_setup (libvlc_int_t *);
 void vlc_trace (const char *fn, const char *file, unsigned line);
 #define vlc_backtrace() vlc_trace(__func__, __FILE__, __LINE__)
 
-#if (defined (LIBVLC_USE_PTHREAD) || defined(__ANDROID__)) && !defined (NDEBUG)
-void vlc_assert_locked (vlc_mutex_t *);
+#ifndef NDEBUG
+/**
+ * Marks a mutex locked.
+ */
+void vlc_mutex_mark(const vlc_mutex_t *);
+
+/**
+ * Unmarks a mutex.
+ */
+void vlc_mutex_unmark(const vlc_mutex_t *);
 #else
-# define vlc_assert_locked( m ) (void)m
+# define vlc_mutex_mark(m) ((void)(m))
+# define vlc_mutex_unmark(m) ((void)(m))
 #endif
 
 /*
@@ -183,8 +194,9 @@ typedef struct libvlc_priv_t
     vlc_dialog_provider *p_dialog_provider; ///< dialog provider
     vlc_keystore      *p_memory_keystore; ///< memory keystore
     struct playlist_t *playlist; ///< Playlist for interfaces
-    struct playlist_preparser_t *parser; ///< Input item meta data handler
+    struct input_preparser_t *parser; ///< Input item meta data handler
     vlc_actions_t *actions; ///< Hotkeys handler
+    struct vlc_medialibrary_t *p_media_library; ///< Media library instance
 
     /* Exit callback */
     vlc_exit_t       exit;
@@ -198,6 +210,12 @@ static inline libvlc_priv_t *libvlc_priv (libvlc_int_t *libvlc)
 int intf_InsertItem(libvlc_int_t *, const char *mrl, unsigned optc,
                     const char * const *optv, unsigned flags);
 void intf_DestroyAll( libvlc_int_t * );
+
+int vlc_MetadataRequest(libvlc_int_t *libvlc, input_item_t *item,
+                        input_item_meta_request_option_t i_options,
+                        const input_preparser_callbacks_t *cbs,
+                        void *cbs_userdata,
+                        int timeout, void *id);
 
 /*
  * Variables stuff

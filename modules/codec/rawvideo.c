@@ -35,7 +35,7 @@
 /*****************************************************************************
  * decoder_sys_t : raw video decoder descriptor
  *****************************************************************************/
-struct decoder_sys_t
+typedef struct
 {
     /*
      * Input properties
@@ -48,7 +48,7 @@ struct decoder_sys_t
      * Common properties
      */
     date_t pts;
-};
+} decoder_sys_t;
 
 /****************************************************************************
  * Local prototypes
@@ -116,10 +116,10 @@ static int OpenCommon( decoder_t *p_dec )
 
     for( unsigned i = 0; i < dsc->plane_count; i++ )
     {
-        unsigned pitch = p_dec->fmt_in.video.i_width * dsc->pixel_size
-                         * dsc->p[i].w.num / dsc->p[i].w.den;
-        unsigned lines = p_dec->fmt_in.video.i_height
-                         * dsc->p[i].h.num / dsc->p[i].h.den;
+        unsigned pitch = ((p_dec->fmt_in.video.i_width + (dsc->p[i].w.den - 1)) / dsc->p[i].w.den)
+                         * dsc->p[i].w.num * dsc->pixel_size;
+        unsigned lines = ((p_dec->fmt_in.video.i_height + (dsc->p[i].h.den - 1)) / dsc->p[i].h.den)
+                         * dsc->p[i].h.num;
 
         p_sys->pitches[i] = pitch;
         p_sys->lines[i] = lines;
@@ -137,7 +137,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    date_Set( &p_sys->pts, VLC_TS_INVALID );
+    date_Set( &p_sys->pts, VLC_TICK_INVALID );
 }
 
 /****************************************************************************
@@ -159,8 +159,8 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t *p_block )
         }
     }
 
-    if( p_block->i_pts <= VLC_TS_INVALID && p_block->i_dts <= VLC_TS_INVALID &&
-        !date_Get( &p_sys->pts ) )
+    if( p_block->i_pts == VLC_TICK_INVALID && p_block->i_dts == VLC_TICK_INVALID &&
+        date_Get( &p_sys->pts ) == VLC_TICK_INVALID )
     {
         /* We've just started the stream, wait for the first PTS. */
         block_Release( p_block );
@@ -168,11 +168,11 @@ static block_t *DecodeBlock( decoder_t *p_dec, block_t *p_block )
     }
 
     /* Date management: If there is a pts avaliable, use that. */
-    if( p_block->i_pts > VLC_TS_INVALID )
+    if( p_block->i_pts != VLC_TICK_INVALID )
     {
         date_Set( &p_sys->pts, p_block->i_pts );
     }
-    else if( p_block->i_dts > VLC_TS_INVALID )
+    else if( p_block->i_dts != VLC_TICK_INVALID )
     {
         /* NB, davidf doesn't quite agree with this in general, it is ok
          * for rawvideo since it is in order (ie pts=dts), however, it
@@ -244,7 +244,7 @@ static int DecodeFrame( decoder_t *p_dec, block_t *p_block )
     FillPicture( p_dec, p_block, p_pic );
 
     /* Date management: 1 frame per packet */
-    p_pic->date = date_Get( &p_dec->p_sys->pts );
+    p_pic->date = date_Get( &p_sys->pts );
     date_Increment( &p_sys->pts, 1 );
 
     if( p_block->i_flags & BLOCK_FLAG_INTERLACED_MASK )
@@ -308,7 +308,10 @@ static int OpenPacketizer( vlc_object_t *p_this )
 
     int ret = OpenCommon( p_dec );
     if( ret == VLC_SUCCESS )
+    {
         p_dec->pf_packetize = SendFrame;
+        p_dec->pf_flush = Flush;
+    }
     return ret;
 }
 

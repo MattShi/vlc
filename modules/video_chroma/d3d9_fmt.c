@@ -29,12 +29,6 @@
 
 #include "../codec/avcodec/va_surface.h"
 
-picture_sys_t *ActivePictureSys(picture_t *p_pic)
-{
-    struct va_pic_context *pic_ctx = (struct va_pic_context*)p_pic->context;
-    return pic_ctx ? &pic_ctx->picsys : p_pic->p_sys;
-}
-
 #undef D3D9_CreateDevice
 HRESULT D3D9_CreateDevice(vlc_object_t *o, d3d9_handle_t *hd3d, HWND hwnd,
                           const video_format_t *source, d3d9_device_t *out)
@@ -98,7 +92,7 @@ HRESULT D3D9_CreateDevice(vlc_object_t *o, d3d9_handle_t *hd3d, HWND hwnd,
     if (FAILED(IDirect3D9_GetAdapterIdentifier(hd3d->obj, AdapterToUse,0, &d3dai))) {
         msg_Warn(o, "IDirect3D9_GetAdapterIdentifier failed");
     } else {
-        msg_Dbg(o, "Direct3d9 Device: %s %lu %lu %lu", d3dai.Description,
+        msg_Dbg(o, "Direct3d9 Device: %s %lx %lx %lx", d3dai.Description,
                 d3dai.VendorId, d3dai.DeviceId, d3dai.Revision );
     }
 
@@ -254,32 +248,4 @@ int D3D9_Create(vlc_object_t *o, d3d9_handle_t *hd3d)
 error:
     D3D9_Destroy( hd3d );
     return VLC_EGENERIC;
-}
-
-int D3D9CheckDriverVersion(d3d9_handle_t *hd3d, d3d9_device_t *d3d_dev,
-                           UINT vendorId, const struct wddm_version *min_ver)
-{
-    D3DADAPTER_IDENTIFIER9 identifier;
-    HRESULT hr = IDirect3D9_GetAdapterIdentifier(hd3d->obj, d3d_dev->adapterId, 0, &identifier);
-    if (FAILED(hr))
-        return VLC_EGENERIC;
-
-    if (vendorId && identifier.VendorId != vendorId)
-        return VLC_SUCCESS;
-
-    int wddm, d3d_features, revision, build;
-    wddm         = (int) (identifier.DriverVersion.HighPart >> 16 & 0xFFFF);
-    d3d_features = (int) (identifier.DriverVersion.HighPart >>  0 & 0xFFFF);
-    revision     = (int) (identifier.DriverVersion.LowPart  >> 16 & 0xFFFF);
-    build        = (int) (identifier.DriverVersion.LowPart  >>  0 & 0xFFFF);
-
-    bool newer =
-           wddm > min_ver->wddm ||
-          (wddm == min_ver->wddm && (d3d_features > min_ver->d3d_features ||
-                                    (d3d_features == min_ver->d3d_features &&
-                                                (revision > min_ver->revision ||
-                                                (revision == min_ver->revision &&
-                                                       build > min_ver->build)))));
-
-    return newer ? VLC_SUCCESS : VLC_EGENERIC;
 }

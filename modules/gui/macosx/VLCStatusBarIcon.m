@@ -33,6 +33,7 @@
 #import "CompatibilityFixes.h"
 #import "VLCCoreInteraction.h"
 #import "VLCStringUtility.h"
+#import "NSString+Helpers.h"
 
 #import "VLCApplication.h"
 
@@ -81,7 +82,7 @@
 
     if (self) {
         msg_Dbg(getIntf(), "Loading VLCStatusBarIcon");
-        [NSBundle loadNibNamed:@"VLCStatusBarIconMainMenu" owner:self];
+        [[NSBundle mainBundle] loadNibNamed:@"VLCStatusBarIconMainMenu" owner:self topLevelObjects:nil];
     }
 
     return self;
@@ -97,18 +98,10 @@
     [self configurationChanged:nil];
 
     // Set Accessibility Attributes for Image Buttons
-    [backwardsButton.cell accessibilitySetOverrideValue:_NS("Go to previous item")
-                                           forAttribute:NSAccessibilityDescriptionAttribute];
-
-    [playPauseButton.cell accessibilitySetOverrideValue:_NS("Toggle Play/Pause")
-                                           forAttribute:NSAccessibilityDescriptionAttribute];
-
-    [forwardButton.cell accessibilitySetOverrideValue:_NS("Go to next item")
-                                         forAttribute:NSAccessibilityDescriptionAttribute];
-
-    [randButton.cell accessibilitySetOverrideValue:_NS("Toggle random order playback")
-                                      forAttribute:NSAccessibilityDescriptionAttribute];
-    
+    backwardsButton.accessibilityLabel = _NS("Go to previous item");
+    playPauseButton.accessibilityLabel = _NS("Toggle Play/Pause");
+    forwardButton.accessibilityLabel = _NS("Go to next item");
+    randButton.accessibilityLabel = _NS("Toggle random order playback");
 
     // Populate menu items with localized strings
     [showMainWindowItem setTitle:_NS("Show Main Window")];
@@ -143,7 +136,7 @@
 
         // Sync status bar visibility with VLC setting
         msg_Dbg(getIntf(), "Status bar icon visibility changed to %i", isVisible);
-        config_PutInt(getIntf(), "macosx-statusicon", isVisible ? 1 : 0);
+        config_PutInt("macosx-statusicon", isVisible ? 1 : 0);
     } else {
         [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
     }
@@ -176,10 +169,8 @@
         // Attach pull-down menu
         [self.statusItem setMenu:_vlcStatusBarIconMenu];
 
-        // Visibility is 10.12+
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpartial-availability"
-        if (OSX_SIERRA_AND_HIGHER) {
+
+        if (@available(macOS 10.12, *)) {
             [self.statusItem setBehavior:NSStatusItemBehaviorRemovalAllowed];
             [self.statusItem setAutosaveName:@"statusBarItem"];
             [self.statusItem addObserver:self forKeyPath:NSStringFromSelector(@selector(isVisible))
@@ -187,7 +178,7 @@
         }
     }
 
-    if (OSX_SIERRA_AND_HIGHER) {
+    if (@available(macOS 10.12, *)) {
         // Sync VLC setting with status bar visibility setting (10.12 runtime only)
         [self.statusItem setVisible:YES];
     }
@@ -199,13 +190,12 @@
         return;
 
     // Lets keep alive the object in Sierra, and destroy it in older OS versions
-    if (OSX_SIERRA_AND_HIGHER) {
+    if (@available(macOS 10.12, *)) {
         self.statusItem.visible = NO;
     } else {
         [[NSStatusBar systemStatusBar] removeStatusItem:self.statusItem];
         self.statusItem = nil;
     }
-#pragma clang diagnostic pop
 }
 
 - (void)dealloc
@@ -254,11 +244,11 @@
         NSString *totalTime;
 
         /* Get elapsed and remaining time */
-        elapsedTime = [[VLCStringUtility sharedInstance] getCurrentTimeAsString:input negative:NO];
-        remainingTime = [[VLCStringUtility sharedInstance] getCurrentTimeAsString:input negative:YES];
+        elapsedTime = [NSString stringWithTimeFromInput:input negative:NO];
+        remainingTime = [NSString stringWithTimeFromInput:input negative:YES];
 
         /* Check item duration */
-        mtime_t dur = input_item_GetDuration(input_GetItem(input));
+        vlc_tick_t dur = input_item_GetDuration(input_GetItem(input));
 
         if (dur == -1) {
             /* Unknown duration, possibly due to buffering */
@@ -270,7 +260,7 @@
             [totalField setStringValue:@"∞"];
         } else {
             /* Not unknown, update displayed duration */
-            totalTime = [[VLCStringUtility sharedInstance] stringForTime:(dur/1000000)];
+            totalTime = [NSString stringWithTime:SEC_FROM_VLC_TICK(dur)];
             [progressField setStringValue:(showTimeElapsed) ? elapsedTime : remainingTime];
             [totalField setStringValue:totalTime];
         }

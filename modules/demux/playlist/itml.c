@@ -101,7 +101,10 @@ static int ReadDir( stream_t *p_demux, input_item_node_t *p_subitems )
     }
 
     xml_elem_hnd_t pl_elements[] =
-        { {"dict",    COMPLEX_CONTENT, {.cmplx = parse_plist_dict} } };
+        {
+            {"dict",    COMPLEX_CONTENT, {.cmplx = parse_plist_dict} },
+            {NULL,      UNKNOWN_CONTENT, {NULL} }
+        };
     parse_plist_node( p_demux, p_subitems, NULL, p_xml_reader, "plist",
                       pl_elements );
 
@@ -279,8 +282,8 @@ static bool parse_tracks_dict( stream_t *p_demux, input_item_node_t *p_input_nod
     parse_dict( p_demux, p_input_node, NULL, p_xml_reader,
                 "dict", tracks_elements );
 
-    msg_Info( p_demux, "added %zi tracks successfully",
-              (size_t)p_demux->p_sys );
+    msg_Info( p_demux, "added %" PRIuPTR " tracks successfully",
+              (uintptr_t)p_demux->p_sys );
 
     return true;
 }
@@ -386,7 +389,7 @@ static bool save_data( track_elem_t *p_track, const char *psz_name,
     else if( !strcmp( psz_name, "Total Time" ) )
     {
         long i_num = atol( psz_value );
-        p_track->duration = (mtime_t) i_num*1000;
+        p_track->duration = (vlc_tick_t) i_num*1000;
     }
 #undef SAVE_INFO
     return true;

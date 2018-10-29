@@ -1,12 +1,24 @@
-SUFFIXES += .xib
+SUFFIXES += .xib .nib
 
-libmacosx_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-exceptions -fobjc-arc 
+xib_verbose = $(xib_verbose_$(V))
+xib_verbose_ = $(xib_verbose__$(AM_DEFAULT_VERBOSITY))
+xib_verbose_0 = @echo "  XIB     " $@;
+xib_verbose__0 = $(xib_verbose_0)
+
+.xib.nib:
+	$(AM_V_at)mkdir -p -- gui/macosx/UI
+	$(xib_verbose)$(XIB) --errors --warnings --notices \
+	  --module VLC --auto-activate-custom-fonts --target-device mac \
+	  --minimum-deployment-target 10.11 --output-format human-readable-text \
+	  --compile $@ $<
+
+libmacosx_plugin_la_OBJCFLAGS = $(AM_OBJCFLAGS) -fobjc-exceptions -fobjc-arc
 libmacosx_plugin_la_LDFLAGS = $(AM_LDFLAGS) -rpath '$(guidir)' \
-	-Wl,-framework,Cocoa -Wl,-framework,Carbon -Wl,-framework,CoreServices \
+	-Wl,-framework,Cocoa -Wl,-framework,CoreServices \
 	-Wl,-framework,AVFoundation -Wl,-framework,CoreMedia -Wl,-framework,IOKit \
 	-Wl,-framework,AddressBook -Wl,-framework,WebKit -Wl,-framework,CoreAudio \
 	-Wl,-framework,SystemConfiguration -Wl,-framework,ScriptingBridge \
-	-Wl,-framework,QuartzCore
+	-Wl,-framework,QuartzCore -Wl,-weak_framework,MediaPlayer
 
 if HAVE_SPARKLE
 libmacosx_plugin_la_LDFLAGS += -Wl,-framework,Sparkle
@@ -14,6 +26,7 @@ endif
 
 libmacosx_plugin_la_SOURCES = \
 	gui/macosx/helpers.h \
+	gui/macosx/NSString+Helpers.h gui/macosx/NSString+Helpers.m \
 	gui/macosx/VLCAboutWindowController.h gui/macosx/VLCAboutWindowController.m \
 	gui/macosx/VLCAddonListItem.h gui/macosx/VLCAddonListItem.m \
 	gui/macosx/VLCAddonsWindowController.h gui/macosx/VLCAddonsWindowController.m \
@@ -36,7 +49,6 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCKeyboardBacklightControl.h gui/macosx/VLCKeyboardBacklightControl.m \
 	gui/macosx/macosx.m \
 	gui/macosx/VLCMainMenu.h gui/macosx/VLCMainMenu.m \
-	gui/macosx/VLCMainWindowTitleView.h gui/macosx/VLCMainWindowTitleView.m \
 	gui/macosx/misc.h gui/macosx/misc.m \
 	gui/macosx/NSSound+VLCAdditions.h gui/macosx/NSSound+VLCAdditions.m \
 	gui/macosx/NSScreen+VLCAdditions.h gui/macosx/NSScreen+VLCAdditions.m \
@@ -49,15 +61,11 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCPLModel.h gui/macosx/VLCPLModel.m \
 	gui/macosx/prefs.h gui/macosx/prefs.m \
 	gui/macosx/prefs_widgets.h gui/macosx/prefs_widgets.m \
-	gui/macosx/PXSourceList.h gui/macosx/PXSourceList.m \
-	gui/macosx/PXSourceListDataSource.h gui/macosx/PXSourceListDelegate.h \
-	gui/macosx/SideBarItem.h gui/macosx/SideBarItem.m \
 	gui/macosx/VLCPopupPanelController.h gui/macosx/VLCPopupPanelController.m \
 	gui/macosx/VLCTextfieldPanelController.h gui/macosx/VLCTextfieldPanelController.m \
 	gui/macosx/VLCSimplePrefsController.h gui/macosx/VLCSimplePrefsController.m \
 	gui/macosx/VLCSimplePrefsWindow.h gui/macosx/VLCSimplePrefsWindow.m \
 	gui/macosx/VLCHotkeyChangeWindow.h gui/macosx/VLCHotkeyChangeWindow.m \
-	gui/macosx/SPInvocationGrabbing.h gui/macosx/SPInvocationGrabbing.m \
 	gui/macosx/SPMediaKeyTap.h gui/macosx/SPMediaKeyTap.m \
 	gui/macosx/Spotify.h \
 	gui/macosx/VLCStringUtility.h gui/macosx/VLCStringUtility.m \
@@ -66,8 +74,9 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCUIWidgets.h gui/macosx/VLCUIWidgets.m \
 	gui/macosx/VLCScrollingClipView.h gui/macosx/VLCScrollingClipView.m \
 	gui/macosx/VLCStatusBarIcon.h gui/macosx/VLCStatusBarIcon.m \
-	gui/macosx/VLCVoutWindowController.h gui/macosx/VLCVoutWindowController.m \
-	gui/macosx/Windows.h gui/macosx/Windows.m \
+	gui/macosx/VLCVideoOutputProvider.h gui/macosx/VLCVideoOutputProvider.m \
+	gui/macosx/VLCWindow.h gui/macosx/VLCWindow.m \
+	gui/macosx/VLCVideoWindowCommon.h gui/macosx/VLCVideoWindowCommon.m \
 	gui/macosx/VLCAudioEffectsWindowController.h gui/macosx/VLCAudioEffectsWindowController.m \
 	gui/macosx/VLCBookmarksWindowController.h gui/macosx/VLCBookmarksWindowController.m \
 	gui/macosx/VLCBottomBarView.h gui/macosx/VLCBottomBarView.m \
@@ -78,11 +87,15 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCHUDTableView.h gui/macosx/VLCHUDTableView.m \
 	gui/macosx/VLCHUDTableCornerView.h gui/macosx/VLCHUDTableCornerView.m \
 	gui/macosx/VLCInputManager.h gui/macosx/VLCInputManager.m \
+	gui/macosx/VLCRemoteControlService.h gui/macosx/VLCRemoteControlService.m \
 	gui/macosx/VLCMainWindow.h gui/macosx/VLCMainWindow.m \
 	gui/macosx/VLCRendererDiscovery.h gui/macosx/VLCRendererDiscovery.m \
 	gui/macosx/VLCRendererItem.h gui/macosx/VLCRendererItem.m \
 	gui/macosx/VLCRendererMenuController.h gui/macosx/VLCRendererMenuController.m \
 	gui/macosx/VLCResumeDialogController.h gui/macosx/VLCResumeDialogController.m \
+	gui/macosx/VLCSourceListItem.h gui/macosx/VLCSourceListItem.m \
+	gui/macosx/VLCSourceListTableCellView.h gui/macosx/VLCSourceListTableCellView.m \
+	gui/macosx/VLCSourceListBadgeButton.h gui/macosx/VLCSourceListBadgeButton.m \
 	gui/macosx/VLCTrackSynchronizationWindowController.h gui/macosx/VLCTrackSynchronizationWindowController.m \
 	gui/macosx/VLCVideoEffectsWindowController.h gui/macosx/VLCVideoEffectsWindowController.m \
 	gui/macosx/VLCFSPanelController.h gui/macosx/VLCFSPanelController.m \
@@ -90,7 +103,6 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCDefaultValueSlider.h gui/macosx/VLCDefaultValueSlider.m \
 	gui/macosx/VLCDefaultValueSliderCell.h gui/macosx/VLCDefaultValueSliderCell.m \
 	gui/macosx/VLCImageButton.h gui/macosx/VLCImageButton.m \
-	gui/macosx/VLCTintedImageButtonCell.h gui/macosx/VLCTintedImageButtonCell.m \
 	gui/macosx/VLCTimeField.h gui/macosx/VLCTimeField.m \
 	gui/macosx/VLCHexNumberFormatter.h gui/macosx/VLCHexNumberFormatter.m \
 	gui/macosx/VLCSlider.h gui/macosx/VLCSlider.m \
@@ -99,39 +111,29 @@ libmacosx_plugin_la_SOURCES = \
 	gui/macosx/VLCVolumeSliderCell.h gui/macosx/VLCVolumeSliderCell.m \
 	gui/macosx/VLCWrappableTextField.h gui/macosx/VLCWrappableTextField.m
 
+# PXSourceList sources
+libmacosx_plugin_la_SOURCES += \
+	gui/macosx/PXSourceList/PXSourceList.h \
+	gui/macosx/PXSourceList/PXSourceList.m \
+	gui/macosx/PXSourceList/PXSourceListBadgeCell.h \
+	gui/macosx/PXSourceList/PXSourceListBadgeCell.m \
+	gui/macosx/PXSourceList/PXSourceListBadgeView.h \
+	gui/macosx/PXSourceList/PXSourceListBadgeView.m \
+	gui/macosx/PXSourceList/PXSourceListItem.h \
+	gui/macosx/PXSourceList/PXSourceListItem.m \
+	gui/macosx/PXSourceList/PXSourceListTableCellView.h \
+	gui/macosx/PXSourceList/PXSourceListTableCellView.m \
+	gui/macosx/PXSourceList/Internal/PXSourceListDelegateDataSourceProxy.h \
+	gui/macosx/PXSourceList/Internal/PXSourceListDelegateDataSourceProxy.m \
+	gui/macosx/PXSourceList/Internal/PXSourceListRuntimeAdditions.h \
+	gui/macosx/PXSourceList/Internal/PXSourceListRuntimeAdditions.m \
+	gui/macosx/PXSourceList/Internal/PXSourceListPrivateConstants.h \
+	gui/macosx/PXSourceList/PXSourceListDataSource.h \
+	gui/macosx/PXSourceList/PXSourceListDelegate.h
 
 # User interface compilation
 
-nodist_libmacosx_plugin_la_SOURCES = \
-	gui/macosx/UI/About.nib \
-	gui/macosx/UI/AddonManager.nib \
-	gui/macosx/UI/AudioEffects.nib \
-	gui/macosx/UI/Bookmarks.nib \
-	gui/macosx/UI/ConvertAndSave.nib \
-	gui/macosx/UI/CoreDialogs.nib \
-	gui/macosx/UI/DetachedVideoWindow.nib \
-	gui/macosx/UI/ErrorPanel.nib \
-	gui/macosx/UI/Help.nib \
-	gui/macosx/UI/LogMessageWindow.nib \
-	gui/macosx/UI/MainMenu.nib \
-	gui/macosx/UI/MainWindow.nib \
-	gui/macosx/UI/MediaInfo.nib \
-	gui/macosx/UI/Open.nib \
-	gui/macosx/UI/PlaylistAccessoryView.nib \
-	gui/macosx/UI/PlaylistMenu.nib \
-	gui/macosx/UI/PopupPanel.nib \
-	gui/macosx/UI/Preferences.nib \
-	gui/macosx/UI/ResumeDialog.nib \
-	gui/macosx/UI/SimplePreferences.nib \
-	gui/macosx/UI/StreamOutput.nib \
-	gui/macosx/UI/SyncTracks.nib \
-	gui/macosx/UI/TextfieldPanel.nib \
-	gui/macosx/UI/TimeSelectionPanel.nib \
-	gui/macosx/UI/VideoEffects.nib \
-	gui/macosx/UI/VLCFullScreenPanel.nib \
-	gui/macosx/UI/VLCStatusBarIconMainMenu.nib
-
-EXTRA_DIST += \
+libmacosx_plugin_la_XIB_SOURCES = \
 	gui/macosx/UI/About.xib \
 	gui/macosx/UI/AddonManager.xib \
 	gui/macosx/UI/AudioEffects.xib \
@@ -160,21 +162,11 @@ EXTRA_DIST += \
 	gui/macosx/UI/VLCFullScreenPanel.xib \
 	gui/macosx/UI/VLCStatusBarIconMainMenu.xib
 
-xib_verbose = $(xib_verbose_$(V))
-xib_verbose_ = $(xib_verbose__$(AM_DEFAULT_VERBOSITY))
-xib_verbose_0 = @echo "  XIB   " $@;
-xib_verbose__0 = $(xib_verbose_0)
-
-.xib.nib:
-	$(AM_V_at)mkdir -p -- gui/macosx/UI
-	$(xib_verbose)$(XIB) --errors --warnings --notices \
-	  --module VLC --auto-activate-custom-fonts --target-device mac \
-	  --minimum-deployment-target 10.10 --output-format human-readable-text \
-	  --compile $@ $<
+libmacosx_plugin_la_SOURCES += $(libmacosx_plugin_la_XIB_SOURCES)
 
 if ENABLE_MACOSX_UI
 gui_LTLIBRARIES += libmacosx_plugin.la
-BUILT_SOURCES += $(nodist_libmacosx_plugin_la_SOURCES)
+BUILT_SOURCES += $(libmacosx_plugin_la_XIB_SOURCES:.xib=.nib)
 endif
 
 
@@ -289,144 +281,6 @@ libmacosx_plugin_la_RES = \
 	gui/macosx/Resources/mainwindow/volume-high@2x.png \
 	gui/macosx/Resources/mainwindow/volume-low.png \
 	gui/macosx/Resources/mainwindow/volume-low@2x.png \
-	gui/macosx/Resources/mainwindow_dark/backward-3btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/backward-3btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/backward-3btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/backward-3btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/backward-6btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/backward-6btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/backward-6btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/backward-6btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/effects-double-buttons-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/effects-double-buttons-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/effects-double-buttons_dark.png \
-	gui/macosx/Resources/mainwindow_dark/effects-double-buttons_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/effects-one-button-pressed-dark.png \
-	gui/macosx/Resources/mainwindow_dark/effects-one-button-pressed-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/effects-one-button_dark.png \
-	gui/macosx/Resources/mainwindow_dark/effects-one-button_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/forward-3btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/forward-3btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/forward-3btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/forward-3btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/forward-6btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/forward-6btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/forward-6btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/forward-6btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-double-buttons-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-double-buttons-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-double-buttons_dark.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-double-buttons_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-one-button-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-one-button-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-one-button_dark.png \
-	gui/macosx/Resources/mainwindow_dark/fullscreen-one-button_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/next-6btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/next-6btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/next-6btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/next-6btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/pause-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/pause-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/pause_dark.png \
-	gui/macosx/Resources/mainwindow_dark/pause_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/play-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/play-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/play_dark.png \
-	gui/macosx/Resources/mainwindow_dark/play_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-1btn-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-1btn-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-1btn-dark.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-1btn-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/playlist-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/playlist_dark.png \
-	gui/macosx/Resources/mainwindow_dark/playlist_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/previous-6btns-dark-pressed.png \
-	gui/macosx/Resources/mainwindow_dark/previous-6btns-dark-pressed@2x.png \
-	gui/macosx/Resources/mainwindow_dark/previous-6btns-dark.png \
-	gui/macosx/Resources/mainwindow_dark/previous-6btns-dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-all-blue-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-all-blue-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-all-blue_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-all-blue_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-one-blue-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-one-blue-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-one-blue_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-one-blue_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/repeat_dark.png \
-	gui/macosx/Resources/mainwindow_dark/repeat_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-blue-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-blue-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-blue_dark.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-blue_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle_dark.png \
-	gui/macosx/Resources/mainwindow_dark/shuffle_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/stop-pressed_dark.png \
-	gui/macosx/Resources/mainwindow_dark/stop-pressed_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/stop_dark.png \
-	gui/macosx/Resources/mainwindow_dark/stop_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-on-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-on-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-on.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-on@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-over-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-over-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-over.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close-over@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-close@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-on-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-on-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-on.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-on@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-over-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-over-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-over.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen-over@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-fullscreen@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-on-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-on-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-on.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-on@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-over-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-over-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-over.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize-over@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-minimize@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-on-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-on-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-on.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-on@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-over-graphite.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-over-graphite@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-over.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom-over@2x.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom.png \
-	gui/macosx/Resources/mainwindow_dark/titlebar/window-zoom@2x.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-center-fill.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-center-fill@2x.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-left.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-left@2x.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-right.png \
-	gui/macosx/Resources/mainwindow_dark/topbar-dark-right@2x.png \
-	gui/macosx/Resources/mainwindow_dark/volume-high_dark.png \
-	gui/macosx/Resources/mainwindow_dark/volume-high_dark@2x.png \
-	gui/macosx/Resources/mainwindow_dark/volume-low_dark.png \
-	gui/macosx/Resources/mainwindow_dark/volume-low_dark@2x.png \
 	gui/macosx/Resources/noart.png \
 	gui/macosx/Resources/Pref-Icons/VLCAudioCone.png \
 	gui/macosx/Resources/Pref-Icons/VLCHotkeysCone.png \

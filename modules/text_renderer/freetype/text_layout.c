@@ -66,6 +66,8 @@
 #include "text_layout.h"
 #include "platform_fonts.h"
 
+#include <stdlib.h>
+
 /* Win32 */
 #ifdef _WIN32
 # undef HAVE_FONTCONFIG
@@ -153,6 +155,9 @@ typedef struct paragraph_t
 
 #ifdef HAVE_FRIBIDI
     FriBidiCharType     *p_types;
+#if FRIBIDI_MAJOR_VERSION >= 1
+    FriBidiBracketType  *p_btypes;
+#endif
     FriBidiLevel        *p_levels;
     FriBidiStrIndex     *pi_reordered_indices;
     FriBidiParType       paragraph_type;
@@ -345,7 +350,7 @@ static paragraph_t *NewParagraph( filter_t *p_filter,
 
     if( pi_k_dates )
     {
-        int64_t i_elapsed  = var_GetInteger( p_filter, "spu-elapsed" ) / 1000;
+        int64_t i_elapsed  = MS_FROM_VLC_TICK(var_GetInteger( p_filter, "spu-elapsed" ));
         for( int i = 0; i < i_size; ++i )
         {
             p_paragraph->pi_karaoke_bar[ i ] = pi_k_dates[ i ] >= i_elapsed;
@@ -361,6 +366,9 @@ static paragraph_t *NewParagraph( filter_t *p_filter,
 #ifdef HAVE_FRIBIDI
     p_paragraph->p_levels = vlc_alloc( i_size, sizeof( *p_paragraph->p_levels ) );
     p_paragraph->p_types = vlc_alloc( i_size, sizeof( *p_paragraph->p_types ) );
+#if FRIBIDI_MAJOR_VERSION >= 1
+    p_paragraph->p_btypes = vlc_alloc( i_size, sizeof( *p_paragraph->p_btypes ) );
+#endif
     p_paragraph->pi_reordered_indices =
             vlc_alloc( i_size, sizeof( *p_paragraph->pi_reordered_indices ) );
 
@@ -398,6 +406,9 @@ error:
 #ifdef HAVE_FRIBIDI
     if( p_paragraph->p_levels ) free( p_paragraph->p_levels );
     if( p_paragraph->p_types ) free( p_paragraph->p_types );
+#if FRIBIDI_MAJOR_VERSION >= 1
+    if( p_paragraph->p_btypes ) free( p_paragraph->p_btypes );
+#endif
     if( p_paragraph->pi_reordered_indices )
         free( p_paragraph->pi_reordered_indices );
 #endif
@@ -424,6 +435,9 @@ static void FreeParagraph( paragraph_t *p_paragraph )
 #ifdef HAVE_FRIBIDI
     free( p_paragraph->pi_reordered_indices );
     free( p_paragraph->p_types );
+#if FRIBIDI_MAJOR_VERSION >= 1
+    free( p_paragraph->p_btypes );
+#endif
     free( p_paragraph->p_levels );
 #endif
 
@@ -436,16 +450,30 @@ static int AnalyzeParagraph( paragraph_t *p_paragraph )
     fribidi_get_bidi_types(  p_paragraph->p_code_points,
                              p_paragraph->i_size,
                              p_paragraph->p_types );
+#if FRIBIDI_MAJOR_VERSION >= 1
+    fribidi_get_bracket_types( p_paragraph->p_code_points,
+                               p_paragraph->i_size,
+                               p_paragraph->p_types,
+                               p_paragraph->p_btypes );
+    fribidi_get_par_embedding_levels_ex( p_paragraph->p_types,
+                                      p_paragraph->p_btypes,
+                                      p_paragraph->i_size,
+                                      &p_paragraph->paragraph_type,
+                                      p_paragraph->p_levels );
+#else
     fribidi_get_par_embedding_levels( p_paragraph->p_types,
                                       p_paragraph->i_size,
                                       &p_paragraph->paragraph_type,
                                       p_paragraph->p_levels );
+#endif
 
 #ifdef HAVE_HARFBUZZ
-    hb_unicode_funcs_t *p_funcs = hb_unicode_funcs_get_default();
+    hb_unicode_funcs_t *p_funcs =
+        hb_unicode_funcs_create( hb_unicode_funcs_get_default() );
     for( int i = 0; i < p_paragraph->i_size; ++i )
         p_paragraph->p_scripts[ i ] =
             hb_unicode_script( p_funcs, p_paragraph->p_code_points[ i ] );
+    hb_unicode_funcs_destroy( p_funcs );
 
     hb_script_t i_last_script;
     int i_last_script_index = -1;
@@ -563,6 +591,7 @@ static int AddRunWithFallback( filter_t *p_filter, paragraph_t *p_paragraph,
     /* Maximum number of faces to try for each run */
     #define MAX_FACES 5
     FT_Face pp_faces[ MAX_FACES ] = {0};
+    FT_Face p_face = NULL;
 
     pp_faces[ 0 ] = SelectAndLoadFace( p_filter, p_style, 0 );
 
@@ -570,7 +599,27 @@ static int AddRunWithFallback( filter_t *p_filter, paragraph_t *p_paragraph,
     {
         int i_index = 0;
         int i_glyph_index = 0;
-        FT_Face p_face = NULL;
+
+#ifdef HAVE_FRIBIDI
+        /*
+         * For white space, punctuation and neutral characters, try to use
+         * the font of the previous character, if any. See #20466.
+         */
+        if( p_face &&
+            ( p_paragraph->p_types[ i ] == FRIBIDI_TYPE_WS
+           || p_paragraph->p_types[ i ] == FRIBIDI_TYPE_CS
+           || p_paragraph->p_types[ i ] == FRIBIDI_TYPE_ON ) )
+        {
+            i_glyph_index = FT_Get_Char_Index( p_face,
+                                               p_paragraph->p_code_points[ i ] );
+            if( i_glyph_index )
+            {
+                p_paragraph->pp_faces[ i ] = p_face;
+                continue;
+            }
+        }
+#endif
+
         do {
             p_face = pp_faces[ i_index ];
             if( !p_face )
@@ -582,31 +631,7 @@ static int AddRunWithFallback( filter_t *p_filter, paragraph_t *p_paragraph,
             i_glyph_index = FT_Get_Char_Index( p_face,
                                                p_paragraph->p_code_points[ i ] );
             if( i_glyph_index )
-            {
                 p_paragraph->pp_faces[ i ] = p_face;
-
-                /*
-                 * Move p_face to the beginning of the array. Otherwise strikethrough
-                 * lines can appear segmented, being rendered at a certain height
-                 * through spaces and at a different height through words.
-                 * Skip this step for the specified special characters. See #15840.
-                 */
-                if( i_index > 0 )
-                {
-                    uni_char_t codepoint = p_paragraph->p_code_points[ i ];
-                    if( codepoint != 0x0009 && codepoint != 0x00A0
-                     && codepoint != 0x1680 && codepoint != 0x061C
-                     && codepoint != 0x202F && codepoint != 0x205F
-                     && codepoint != 0x3000 && codepoint != 0xFEFF
-                     && !( codepoint >= 0x2000 && codepoint <= 0x200F )
-                     && !( codepoint >= 0x202A && codepoint <= 0x202E )
-                     && !( codepoint >= 0x2060 && codepoint <= 0x2069 ) )
-                    {
-                        pp_faces[ i_index ] = pp_faces[ 0 ];
-                        pp_faces[ 0 ] = p_face;
-                    }
-                }
-            }
 
         } while( i_glyph_index == 0 && ++i_index < MAX_FACES );
     }
@@ -1110,11 +1135,11 @@ static int LoadGlyphs( filter_t *p_filter, paragraph_t *p_paragraph,
 
 #undef SKIP_GLYPH
 
-            if( p_filter->p_sys->p_stroker && (p_style->i_style_flags & STYLE_OUTLINE) )
+            if( p_sys->p_stroker && (p_style->i_style_flags & STYLE_OUTLINE) )
             {
                 p_bitmaps->p_outline = p_bitmaps->p_glyph;
                 if( FT_Glyph_StrokeBorder( &p_bitmaps->p_outline,
-                                           p_filter->p_sys->p_stroker, 0, 0 ) )
+                                           p_sys->p_stroker, 0, 0 ) )
                     p_bitmaps->p_outline = 0;
             }
 
@@ -1127,11 +1152,11 @@ static int LoadGlyphs( filter_t *p_filter, paragraph_t *p_paragraph,
                 p_bitmaps->i_x_advance = p_face->glyph->advance.x;
                 p_bitmaps->i_y_advance = p_face->glyph->advance.y;
             }
-        }
 
-        int i_max_run_advance_x = FT_FLOOR( FT_MulFix( p_face->max_advance_width, p_face->size->metrics.x_scale ) );
-        if( i_max_run_advance_x > *pi_max_advance_x )
-            *pi_max_advance_x = i_max_run_advance_x;
+            unsigned i_x_advance = FT_FLOOR( abs( p_bitmaps->i_x_advance ) );
+            if( i_x_advance > *pi_max_advance_x )
+                *pi_max_advance_x = i_x_advance;
+        }
     }
     return VLC_SUCCESS;
 }
@@ -1170,7 +1195,7 @@ static int LayoutLine( filter_t *p_filter,
     int i_ul_thickness = 0;
 
 #ifdef HAVE_FRIBIDI
-    bool b_reordered = ( 0 ==
+    bool b_reordered = ( 0 !=
         fribidi_reorder_line( 0, &p_paragraph->p_types[i_first_char],
                           1 + i_last_char - i_first_char,
                           0, p_paragraph->paragraph_type,
@@ -1540,7 +1565,6 @@ static int LayoutParagraph( filter_t *p_filter, paragraph_t *p_paragraph,
 
             if( i_last_space == i - 1 )
             {
-                p_paragraph->p_glyph_bitmaps[ i - 1 ].i_x_advance = 0;
                 i_last_space = i;
                 continue;
             }

@@ -88,17 +88,13 @@ public:
                                 int filters = EXT_FILTER_MEDIA |
                                 EXT_FILTER_VIDEO | EXT_FILTER_AUDIO |
                                 EXT_FILTER_PLAYLIST,
-                                const QString& path = QString() );
+                                const QUrl& path = QUrl() );
     bool isDying() { return b_isDying; }
     static QString getDirectoryDialog( intf_thread_t *p_intf);
-    static QStringList getOpenURL(QWidget *parent = NULL,
-                                  const QString &caption = QString(),
-                                  const QString &dir = QString(),
-                                  const QString &filter = QString(),
-                                  QString *selectedFilter = NULL );
-    static QString getSaveFileName( QWidget *parent = NULL,
+
+    static QString getSaveFileName(QWidget *parent = NULL,
                                     const QString &caption = QString(),
-                                    const QString &dir = QString(),
+                                    const QUrl &dir = QUrl(),
                                     const QString &filter = QString(),
                                     QString *selectedFilter = NULL );
 
@@ -123,7 +119,6 @@ private:
     bool b_isDying;
 
     void openDialog( int );
-    void addFromSimple( bool, bool );
 
 public slots:
     void playlistDialog();
@@ -163,7 +158,6 @@ public slots:
     void openCaptureDialog();
 
     void PLAppendDialog( int tab = OPEN_FILE_TAB );
-    void MLAppendDialog( int tab = OPEN_FILE_TAB );
 
     void PLOpenDir();
     void PLAppendDir();

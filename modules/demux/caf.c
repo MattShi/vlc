@@ -79,7 +79,7 @@ typedef struct packet_table_t
     uint64_t i_descriptions_start;
 } packet_table_t;
 
-struct demux_sys_t
+typedef struct
 {
     es_format_t  fmt;
     es_out_id_t *es;
@@ -90,7 +90,7 @@ struct demux_sys_t
 
     frame_span_t position;
     packet_table_t packet_table;
-};
+} demux_sys_t;
 
 /*
  We use this value to indicate that the data section extends until the end of the file.
@@ -330,12 +330,12 @@ static int FrameSpanAddDescription( demux_t *p_demux, uint64_t i_desc_offset, fr
 
 /* FrameSpanGetTime returns the time span represented by the frame span. */
 
-static inline mtime_t FrameSpanGetTime( frame_span_t *span, uint32_t i_sample_rate )
+static inline vlc_tick_t FrameSpanGetTime( frame_span_t *span, uint32_t i_sample_rate )
 {
     if( !i_sample_rate )
-        return VLC_TS_INVALID;
+        return VLC_TICK_INVALID;
 
-    return ( span->i_samples * CLOCK_FREQ ) / i_sample_rate + VLC_TS_0;
+    return vlc_tick_from_samples( span->i_samples, i_sample_rate) + VLC_TICK_0;
 }
 
 /* SetSpanWithSample returns the span from the beginning of the file up to and
@@ -903,24 +903,13 @@ static int Open( vlc_object_t *p_this )
         goto caf_open_end;
     }
 
+    p_demux->pf_control = Control;
+    p_demux->pf_demux = Demux;
+    return VLC_SUCCESS;
+
 caf_open_end:
-
-    if( i_error )
-    {
-        free( p_sys->fmt.p_extra );
-        free( p_sys  );
-
-        if( vlc_stream_Seek( p_demux->s, 0 ))
-        {
-            msg_Warn(p_demux, "Could not reset stream position to 0.");
-        }
-    }
-    else
-    {
-        p_demux->pf_control = Control;
-        p_demux->pf_demux = Demux;
-    }
-
+    es_format_Clean( &p_sys->fmt );
+    free( p_sys  );
     return i_error;
 }
 
@@ -935,7 +924,7 @@ static int Demux( demux_t *p_demux )
     if( p_sys->i_data_size != kCHUNK_SIZE_EOF && p_sys->position.i_bytes >= p_sys->i_data_size )
     {
         /* EOF */
-        return 0;
+        return VLC_DEMUXER_EOF;
     }
 
     frame_span_t advance = (frame_span_t){0};
@@ -978,23 +967,23 @@ static int Demux( demux_t *p_demux )
     if( !advance.i_frames )
     {
         msg_Err( p_demux, "Unexpected end of file" );
-        return -1;
+        return VLC_DEMUXER_EGENERIC;
     }
 
     if( vlc_stream_Seek( p_demux->s, p_sys->i_data_offset + p_sys->position.i_bytes ))
     {
         if( p_sys->i_data_size == kCHUNK_SIZE_EOF)
-            return 0;
+            return VLC_DEMUXER_EOF;
 
         msg_Err( p_demux, "cannot seek data" );
-        return -1;
+        return VLC_DEMUXER_EGENERIC;
     }
 
     p_block = vlc_stream_Block( p_demux->s, (int)advance.i_bytes );
     if( p_block == NULL )
     {
         msg_Err( p_demux, "cannot read data" );
-        return -1;
+        return VLC_DEMUXER_EGENERIC;
     }
 
     p_block->i_dts =
@@ -1002,12 +991,10 @@ static int Demux( demux_t *p_demux )
 
     FrameSpanAddSpan( &p_sys->position, &advance );
 
-    /* set PCR */
     es_out_SetPCR( p_demux->out, p_block->i_pts );
-
     es_out_Send( p_demux->out, p_sys->es, p_block );
 
-    return 1;
+    return VLC_DEMUXER_SUCCESS;
 }
 
 /*****************************************************************************
@@ -1015,7 +1002,7 @@ static int Demux( demux_t *p_demux )
  *****************************************************************************/
 static int Control( demux_t *p_demux, int i_query, va_list args )
 {
-    int64_t i64, *pi64, i_sample;
+    int64_t i_sample;
     double f, *pf;
     frame_span_t position;
 
@@ -1029,13 +1016,13 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_GET_LENGTH:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = CLOCK_FREQ * ( i_num_samples / p_sys->fmt.audio.i_rate );
+            *va_arg( args, vlc_tick_t * ) =
+                vlc_tick_from_samples( i_num_samples, p_sys->fmt.audio.i_rate );
             return VLC_SUCCESS;
 
         case DEMUX_GET_TIME:
-            pi64 = va_arg( args, int64_t * );
-            *pi64 = CLOCK_FREQ * ( p_sys->position.i_samples / p_sys->fmt.audio.i_rate );
+            *va_arg( args, vlc_tick_t * ) =
+                vlc_tick_from_samples( p_sys->position.i_samples, p_sys->fmt.audio.i_rate );
             return VLC_SUCCESS;
 
         case DEMUX_GET_POSITION:
@@ -1052,8 +1039,8 @@ static int Control( demux_t *p_demux, int i_query, va_list args )
             return VLC_SUCCESS;
 
         case DEMUX_SET_TIME:
-            i64 = va_arg( args, int64_t );
-            i_sample = i64 * p_sys->fmt.audio.i_rate / INT64_C( 1000000 );
+            i_sample =
+                samples_from_vlc_tick( va_arg( args, vlc_tick_t ), p_sys->fmt.audio.i_rate );
             if( SetSpanWithSample( p_demux, &position, i_sample ))
                 return VLC_EGENERIC;
             p_sys->position = position;
@@ -1084,8 +1071,6 @@ static void Close( vlc_object_t *p_this )
     demux_t     *p_demux = (demux_t*)p_this;
     demux_sys_t *p_sys = p_demux->p_sys;
 
-    es_out_Del( p_demux->out, p_sys->es );
-
-    free( p_sys->fmt.p_extra );
+    es_format_Clean( &p_sys->fmt );
     free( p_sys );
 }

@@ -77,7 +77,7 @@ vlc_module_end()
 
 /* */
 static picture_pool_t *Pool  (vout_display_t *, unsigned);
-static void           Display(vout_display_t *, picture_t *, subpicture_t *subpicture);
+static void           Display(vout_display_t *, picture_t *);
 static int            Control(vout_display_t *, int, va_list);
 
 /*****************************************************************************
@@ -160,7 +160,6 @@ static int Open(vlc_object_t *object)
     vd->display = Display;
     vd->control = Control;
 
-    vout_display_DeleteWindow(vd, NULL);
     return VLC_SUCCESS;
 }
 
@@ -187,7 +186,7 @@ static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
     return sys->pool;
 }
 
-static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
+static void Display(vout_display_t *vd, picture_t *picture)
 {
     vout_display_sys_t *sys = vd->sys;
 
@@ -263,10 +262,6 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
         }
     }
     fflush(sys->f);
-
-    /* */
-    picture_Release(picture);
-    VLC_UNUSED(subpicture);
 }
 
 static int Control(vout_display_t *vd, int query, va_list args)

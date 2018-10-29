@@ -57,7 +57,7 @@ static void Close (vlc_object_t *);
 vlc_module_begin ()
     set_category (CAT_INPUT)
     set_subcategory (SUBCAT_INPUT_STREAM_FILTER)
-    set_capability ("stream_filter", 20)
+    set_capability ("stream_filter", 320)
 
     set_description (N_("LZMA decompression"))
     set_callbacks (OpenXZ, Close)
@@ -72,7 +72,7 @@ vlc_module_begin ()
     set_callbacks (OpenGzip, Close)
 vlc_module_end ()
 
-struct stream_sys_t
+typedef struct
 {
     /* Thread data */
     int          write_fd;
@@ -89,8 +89,8 @@ struct stream_sys_t
     int          read_fd;
     bool         can_pace;
     bool         can_pause;
-    int64_t      pts_delay;
-};
+    vlc_tick_t   pts_delay;
+} stream_sys_t;
 
 extern char **environ;
 
@@ -222,7 +222,7 @@ static int Control (stream_t *stream, int query, va_list args)
             *(va_arg (args, uint64_t *)) = 0;
             break;
         case STREAM_GET_PTS_DELAY:
-            *va_arg (args, int64_t *) = p_sys->pts_delay;
+            *va_arg (args, vlc_tick_t *) = p_sys->pts_delay;
             break;
         case STREAM_SET_PAUSE_STATE:
         {

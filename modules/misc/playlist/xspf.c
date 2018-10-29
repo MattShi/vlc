@@ -75,7 +75,7 @@ static void xspf_export_item( playlist_item_t *p_item, FILE *p_file,
 
     input_item_t *p_input = p_item->p_input;
     char *psz;
-    mtime_t i_duration;
+    vlc_tick_t i_duration;
 
     /* leaves can be written directly */
     fputs( "\t\t<track>\n", p_file );
@@ -142,7 +142,7 @@ xspfexportitem_end:
     i_duration = input_item_GetDuration( p_item->p_input );
     if( i_duration > 0 )
         fprintf( p_file, "\t\t\t<duration>%"PRIu64"</duration>\n",
-                 i_duration / 1000 );
+                 MS_FROM_VLC_TICK(i_duration) );
 
     /* export the intenal id and the input's options (bookmarks, ...)
      * in <extension> */

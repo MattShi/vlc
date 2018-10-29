@@ -40,6 +40,8 @@
 #include "bits.h"
 #include "pes.h"
 
+#include "../../demux/mpeg/timestamps.h"
+
 #include <vlc_iso_lang.h>
 
 /*****************************************************************************
@@ -87,9 +89,9 @@ static int Mux      ( sout_mux_t * );
  * Local prototypes
  *****************************************************************************/
 
-static void MuxWritePackHeader  ( sout_mux_t *, block_t **, mtime_t );
-static void MuxWriteSystemHeader( sout_mux_t *, block_t **, mtime_t );
-static void MuxWritePSM         ( sout_mux_t *, block_t **, mtime_t );
+static void MuxWritePackHeader  ( sout_mux_t *, block_t **, vlc_tick_t );
+static void MuxWriteSystemHeader( sout_mux_t *, block_t **, vlc_tick_t );
+static void MuxWritePSM         ( sout_mux_t *, block_t **, vlc_tick_t );
 
 static void StreamIdInit        ( bool *id, int i_range );
 static int  StreamIdGet         ( bool *id, int i_id_min, int i_id_max );
@@ -103,11 +105,11 @@ typedef struct ps_stream_s
 
     /* Language is iso639-2T */
     uint8_t lang[3];
-    int64_t i_dts;
+    vlc_tick_t i_dts;
 
 } ps_stream_t;
 
-struct sout_mux_sys_t
+typedef struct
 {
     /* Which id are unused */
     bool  stream_id_mpga[16]; /* 0xc0 -> 0xcf */
@@ -121,12 +123,12 @@ struct sout_mux_sys_t
     int i_video_bound;
     int i_pes_count;
     int i_system_header;
-    int i_dts_delay;
+    vlc_tick_t i_dts_delay;
     int i_rate_bound; /* units of 50 bytes/second */
  
     int64_t i_instant_bitrate;
     int64_t i_instant_size;
-    int64_t i_instant_dts;
+    vlc_tick_t i_instant_dts;
 
     bool b_mpeg2;
 
@@ -134,7 +136,7 @@ struct sout_mux_sys_t
 
     int i_psm_version;
     uint32_t crc32_table[256];
-};
+} sout_mux_sys_t;
 
 static const char *const ppsz_sout_options[] = {
     "dts-delay", "pes-max-size", NULL
@@ -180,7 +182,7 @@ static int Open( vlc_object_t *p_this )
     p_sys->b_mpeg2 = !(p_mux->psz_mux && !strcmp( p_mux->psz_mux, "mpeg1" ));
 
     var_Get( p_mux, SOUT_CFG_PREFIX "dts-delay", &val );
-    p_sys->i_dts_delay = (int64_t)val.i_int * 1000;
+    p_sys->i_dts_delay = VLC_TICK_FROM_MS(val.i_int);
 
     var_Get( p_mux, SOUT_CFG_PREFIX "pes-max-size", &val );
     p_sys->i_pes_max_size = (int64_t)val.i_int;
@@ -460,7 +462,7 @@ static int Mux( sout_mux_t *p_mux )
 
         block_t *p_ps, *p_data;
 
-        mtime_t        i_dts;
+        vlc_tick_t     i_dts;
 
         /* Choose which stream to mux */
         int i_stream = sout_MuxGetStream( p_mux, 1, &i_dts );
@@ -478,7 +480,7 @@ static int Mux( sout_mux_t *p_mux )
         /* Write regulary PackHeader */
         if( p_sys->i_pes_count % 30 == 0)
         {
-            int64_t i_mindts = INT64_MAX;
+            vlc_tick_t i_mindts = INT64_MAX;
             for( size_t i=0; i<p_mux->i_nb_inputs; i++ )
             {
                 ps_stream_t *p_s = (ps_stream_t*)p_input->p_sys;
@@ -492,7 +494,7 @@ static int Mux( sout_mux_t *p_mux )
             {
                 /* Update the instant bitrate every second or so */
                 if( p_sys->i_instant_size &&
-                    i_dts - p_sys->i_instant_dts > 1000000 )
+                    i_dts - p_sys->i_instant_dts > VLC_TICK_FROM_SEC(1))
                 {
                     int64_t i_instant_bitrate = p_sys->i_instant_size * 8000000 /
                             ( i_dts - p_sys->i_instant_dts );
@@ -587,15 +589,15 @@ static void StreamIdRelease( bool *id, int i_id_min, int i_id )
 }
 
 static void MuxWritePackHeader( sout_mux_t *p_mux, block_t **p_buf,
-                                mtime_t i_dts )
+                                vlc_tick_t i_dts )
 {
     sout_mux_sys_t *p_sys = p_mux->p_sys;
     bits_buffer_t bits;
     block_t *p_hdr;
-    mtime_t i_scr;
+    int64_t i_scr;
     int i_mux_rate;
 
-    i_scr = (i_dts - p_sys->i_dts_delay) * 9 / 100;
+    i_scr = TO_SCALE_NZ(i_dts - p_sys->i_dts_delay);
 
     p_hdr = block_Alloc( 18 );
     if( !p_hdr )
@@ -645,7 +647,7 @@ static void MuxWritePackHeader( sout_mux_t *p_mux, block_t **p_buf,
 }
 
 static void MuxWriteSystemHeader( sout_mux_t *p_mux, block_t **p_buf,
-                                  mtime_t i_dts )
+                                  vlc_tick_t i_dts )
 {
     sout_mux_sys_t  *p_sys = p_mux->p_sys;
     block_t   *p_hdr;
@@ -747,7 +749,7 @@ static void MuxWriteSystemHeader( sout_mux_t *p_mux, block_t **p_buf,
     block_ChainAppend( p_buf, p_hdr );
 }
 
-static void MuxWritePSM( sout_mux_t *p_mux, block_t **p_buf, mtime_t i_dts )
+static void MuxWritePSM( sout_mux_t *p_mux, block_t **p_buf, vlc_tick_t i_dts )
 {
     sout_mux_sys_t *p_sys = p_mux->p_sys;
     block_t *p_hdr;

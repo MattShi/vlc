@@ -219,7 +219,6 @@ int libvlc_add_intf( libvlc_instance_t *p_instance, const char *name );
  * \param cb callback to invoke when LibVLC wants to exit,
  *           or NULL to disable the exit handler (as by default)
  * \param opaque data pointer for the callback
- * \warning This function and libvlc_wait() cannot be used at the same time.
  */
 LIBVLC_API
 void libvlc_set_exit_handler( libvlc_instance_t *p_instance,
@@ -346,13 +345,6 @@ LIBVLC_API void libvlc_event_detach( libvlc_event_manager_t *p_event_manager,
                                          libvlc_event_type_t i_event_type,
                                          libvlc_callback_t f_callback,
                                          void *p_user_data );
-
-/**
- * Get an event's type name.
- *
- * \param event_type the desired event
- */
-LIBVLC_API const char * libvlc_event_type_name( libvlc_event_type_t event_type );
 
 /** @} */
 

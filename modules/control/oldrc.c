@@ -304,6 +304,19 @@ static int Activate( vlc_object_t *p_this )
         vlc_url_t url;
 
         vlc_UrlParse( &url, psz_host );
+        if( url.psz_host == NULL )
+        {
+            vlc_UrlClean( &url );
+            char *psz_backward_compat_host;
+            if( asprintf( &psz_backward_compat_host, "//%s", psz_host ) < 0 )
+            {
+                free( psz_host );
+                return VLC_EGENERIC;
+            }
+            free( psz_host );
+            psz_host = psz_backward_compat_host;
+            vlc_UrlParse( &url, psz_host );
+        }
 
         msg_Dbg( p_intf, "base: %s, port: %d", url.psz_host, url.i_port );
 
@@ -351,13 +364,20 @@ static int Activate( vlc_object_t *p_this )
 #endif
 
     if( vlc_clone( &p_sys->thread, Run, p_intf, VLC_THREAD_PRIORITY_LOW ) )
-        abort();
+        goto error;
 
     msg_rc( "%s", _("Remote control interface initialized. Type `help' for help.") );
 
     /* Listen to audio volume updates */
     var_AddCallback( p_sys->p_playlist, "volume", VolumeChanged, p_intf );
     return VLC_SUCCESS;
+
+error:
+    net_ListenClose( pi_socket );
+    free( psz_unix_path );
+    vlc_mutex_destroy( &p_sys->status_lock );
+    free( p_sys );
+    return VLC_EGENERIC;
 }
 
 /*****************************************************************************
@@ -416,12 +436,12 @@ static void RegisterCallbacks( intf_thread_t *p_intf )
     ADD( "clear", VOID, Playlist )
     ADD( "prev", VOID, Playlist )
     ADD( "next", VOID, Playlist )
-    ADD( "goto", INTEGER, Playlist )
-    ADD( "status", INTEGER, Playlist )
+    ADD( "goto", STRING, Playlist )
+    ADD( "status", STRING, Playlist )
 
     /* DVD commands */
     ADD( "pause", VOID, Input )
-    ADD( "seek", INTEGER, Input )
+    ADD( "seek", STRING, Input )
     ADD( "title", STRING, Input )
     ADD( "title_n", VOID, Input )
     ADD( "title_p", VOID, Input )
@@ -646,21 +666,19 @@ static void *Run( void *data )
         {
             if( p_sys->p_input )
             {
-                int i, j;
+                int i;
                 vlc_mutex_lock( &input_GetItem(p_sys->p_input)->lock );
                 for ( i = 0; i < input_GetItem(p_sys->p_input)->i_categories; i++ )
                 {
                     info_category_t *p_category = input_GetItem(p_sys->p_input)
                                                         ->pp_categories[i];
+                    info_t *p_info;
 
                     msg_rc( "+----[ %s ]", p_category->psz_name );
                     msg_rc( "| " );
-                    for ( j = 0; j < p_category->i_infos; j++ )
-                    {
-                        info_t *p_info = p_category->pp_infos[j];
+                    info_foreach(p_info, &p_category->infos)
                         msg_rc( "| %s: %s", p_info->psz_name,
                                 p_info->psz_value );
-                    }
                     msg_rc( "| " );
                 }
                 msg_rc( "+----[ end of stream info ]" );
@@ -686,14 +704,14 @@ static void *Run( void *data )
         {
             int64_t t = 0;
             if( p_sys->p_input != NULL )
-                t = var_GetInteger( p_sys->p_input, "time" ) / CLOCK_FREQ;
+                t = SEC_FROM_VLC_TICK(var_GetInteger( p_sys->p_input, "time" ));
             msg_rc( "%"PRIu64, t );
         }
         else if( !strcmp( psz_cmd, "get_length" ) )
         {
             int64_t l = 0;
             if( p_sys->p_input != NULL )
-                l = var_GetInteger( p_sys->p_input, "length" ) / CLOCK_FREQ;
+                l = SEC_FROM_VLC_TICK(var_GetInteger( p_sys->p_input, "length" ));
             msg_rc( "%"PRIu64, l );
         }
         else if( !strcmp( psz_cmd, "get_title" ) )
@@ -894,7 +912,7 @@ static void PositionChanged( intf_thread_t *p_intf,
     vlc_mutex_lock( &p_intf->p_sys->status_lock );
     if( p_intf->p_sys->b_input_buffering )
         msg_rc( STATUS_CHANGE "( time: %"PRId64"s )",
-                (var_GetInteger( p_input, "time" ) / CLOCK_FREQ) );
+                SEC_FROM_VLC_TICK(var_GetInteger( p_input, "time" )) );
     p_intf->p_sys->b_input_buffering = false;
     vlc_mutex_unlock( &p_intf->p_sys->status_lock );
 }
@@ -972,8 +990,8 @@ static int Input( vlc_object_t *p_this, char const *psz_cmd,
         }
         else
         {
-            mtime_t t = atoi( newval.psz_string );
-            var_SetInteger( p_input, "time", CLOCK_FREQ * t );
+            int t = atoi( newval.psz_string );
+            var_SetInteger( p_input, "time", vlc_tick_from_sec( t ) );
         }
         i_error = VLC_SUCCESS;
     }
@@ -1081,7 +1099,7 @@ static int Input( vlc_object_t *p_this, char const *psz_cmd,
              || !strcmp( psz_cmd, "strack" ) )
     {
         const char *psz_variable;
-        vlc_value_t val_name;
+        char *name;
 
         if( !strcmp( psz_cmd, "atrack" ) )
         {
@@ -1097,9 +1115,8 @@ static int Input( vlc_object_t *p_this, char const *psz_cmd,
         }
 
         /* Get the descriptive name of the variable */
-        var_Change( p_input, psz_variable, VLC_VAR_GETTEXT,
-                     &val_name, NULL );
-        if( !val_name.psz_string ) val_name.psz_string = strdup(psz_variable);
+        var_Change( p_input, psz_variable, VLC_VAR_GETTEXT, &name );
+        if( !name ) name = strdup(psz_variable);
 
         if( newval.psz_string && *newval.psz_string )
         {
@@ -1110,30 +1127,31 @@ static int Input( vlc_object_t *p_this, char const *psz_cmd,
         else
         {
             /* get */
-            vlc_value_t val, text;
+            vlc_value_t *val;
+            char **text;
+            size_t count;
 
             int i_value = var_GetInteger( p_input, psz_variable );
 
-            if ( var_Change( p_input, psz_variable,
-                             VLC_VAR_GETCHOICES, &val, &text ) < 0 )
-                goto out;
-
-            msg_rc( "+----[ %s ]", val_name.psz_string );
-            for ( int i = 0; i < val.p_list->i_count; i++ )
+            if ( var_Change( p_input, psz_variable, VLC_VAR_GETCHOICES,
+                             &count, &val, &text ) < 0 )
             {
-                if ( i_value == val.p_list->p_values[i].i_int )
-                    msg_rc( "| %"PRId64" - %s *",
-                            val.p_list->p_values[i].i_int,
-                            text.p_list->p_values[i].psz_string );
-                else
-                    msg_rc( "| %"PRId64" - %s",
-                            val.p_list->p_values[i].i_int,
-                            text.p_list->p_values[i].psz_string );
+                free( name );
+                goto out;
             }
-            var_FreeList( &val, &text );
-            msg_rc( "+----[ end of %s ]", val_name.psz_string );
+
+            msg_rc( "+----[ %s ]", name );
+            for ( size_t i = 0; i < count; i++ )
+            {
+                msg_rc( "| %"PRId64" - %s%s", val[i].i_int, text[i],
+                        (i_value == val[i].i_int) ? " *" : "" );
+                free(text[i]);
+            }
+            free(text);
+            free(val);
+            msg_rc( "+----[ end of %s ]", name );
         }
-        free( val_name.psz_string );
+        free( name );
     }
 out:
     vlc_object_release( p_input );
@@ -1145,9 +1163,9 @@ static void print_playlist( intf_thread_t *p_intf, playlist_item_t *p_item, int 
     char psz_buffer[MSTRTIME_MAX_SIZE];
     for( int i = 0; i< p_item->i_children; i++ )
     {
-        if( p_item->pp_children[i]->p_input->i_duration != -1 )
+        if( p_item->pp_children[i]->p_input->i_duration != INPUT_DURATION_INDEFINITE )
         {
-            secstotimestr( psz_buffer, p_item->pp_children[i]->p_input->i_duration / 1000000 );
+            secstotimestr( psz_buffer, SEC_FROM_VLC_TICK(p_item->pp_children[i]->p_input->i_duration) );
             msg_rc( "|%*s- %s (%s)", 2 * i_level, "", p_item->pp_children[i]->p_input->psz_name, psz_buffer );
         }
         else
@@ -1295,7 +1313,7 @@ static int Playlist( vlc_object_t *p_this, char const *psz_cmd,
         if( p_item )
         {
             msg_rc( "Trying to add %s to playlist.", newval.psz_string );
-            int i_ret = playlist_AddInput( p_playlist, p_item, true, true );
+            int i_ret = playlist_AddInput( p_playlist, p_item, true );
             input_item_Release( p_item );
             if( i_ret != VLC_SUCCESS )
             {
@@ -1311,7 +1329,7 @@ static int Playlist( vlc_object_t *p_this, char const *psz_cmd,
         if( p_item )
         {
             msg_rc( "trying to enqueue %s to playlist", newval.psz_string );
-            int ret =  playlist_AddInput( p_playlist, p_item, false, true );
+            int ret =  playlist_AddInput( p_playlist, p_item, false );
             input_item_Release( p_item );
             if( ret != VLC_SUCCESS )
             {
@@ -1411,22 +1429,7 @@ static int Volume( vlc_object_t *p_this, char const *psz_cmd,
     VLC_UNUSED(psz_cmd); VLC_UNUSED(oldval); VLC_UNUSED(p_data);
     intf_thread_t *p_intf = (intf_thread_t*)p_this;
     playlist_t *p_playlist = p_intf->p_sys->p_playlist;
-    input_thread_t *p_input = playlist_CurrentInput( p_playlist );
     int i_error = VLC_EGENERIC;
-
-    if( !p_input )
-        return VLC_ENOOBJ;
-
-    if( p_input )
-    {
-        int state = var_GetInteger( p_input, "state" );
-        vlc_object_release( p_input );
-        if( state == PAUSE_S )
-        {
-            msg_rc( "%s", _("Type 'pause' to continue.") );
-            return VLC_EGENERIC;
-        }
-    }
 
     if ( *newval.psz_string )
     {
@@ -1455,21 +1458,8 @@ static int VolumeMove( vlc_object_t *p_this, char const *psz_cmd,
     VLC_UNUSED(oldval); VLC_UNUSED(p_data);
     intf_thread_t *p_intf = (intf_thread_t*)p_this;
     float volume;
-    input_thread_t *p_input =
-        playlist_CurrentInput( p_intf->p_sys->p_playlist );
     int i_nb_steps = atoi(newval.psz_string);
     int i_error = VLC_SUCCESS;
-
-    if( !p_input )
-        return VLC_ENOOBJ;
-
-    int state = var_GetInteger( p_input, "state" );
-    vlc_object_release( p_input );
-    if( state == PAUSE_S )
-    {
-        msg_rc( "%s", _("Type 'pause' to continue.") );
-        return VLC_EGENERIC;
-    }
 
     if( !strcmp(psz_cmd, "voldown") )
         i_nb_steps *= -1;
@@ -1542,10 +1532,12 @@ static int VideoConfig( vlc_object_t *p_this, char const *psz_cmd,
     else
     {
         /* get */
-        vlc_value_t val_name;
-        vlc_value_t val, text;
+        char *name;
+        vlc_value_t *val;
+        char **text;
         float f_value = 0.;
         char *psz_value = NULL;
+        size_t count;
 
         if( !strcmp( psz_variable, "zoom" ) )
             f_value = var_GetFloat( p_vout, "zoom" );
@@ -1559,8 +1551,8 @@ static int VideoConfig( vlc_object_t *p_this, char const *psz_cmd,
             }
         }
 
-        if ( var_Change( p_vout, psz_variable,
-                         VLC_VAR_GETCHOICES, &val, &text ) < 0 )
+        if ( var_Change( p_vout, psz_variable, VLC_VAR_GETCHOICES,
+                         &count, &val, &text ) < 0 )
         {
             vlc_object_release( p_vout );
             free( psz_value );
@@ -1568,40 +1560,36 @@ static int VideoConfig( vlc_object_t *p_this, char const *psz_cmd,
         }
 
         /* Get the descriptive name of the variable */
-        var_Change( p_vout, psz_variable, VLC_VAR_GETTEXT,
-                    &val_name, NULL );
-        if( !val_name.psz_string ) val_name.psz_string = strdup(psz_variable);
+        var_Change( p_vout, psz_variable, VLC_VAR_GETTEXT, &name );
+        if( !name ) name = strdup(psz_variable);
 
-        msg_rc( "+----[ %s ]", val_name.psz_string );
+        msg_rc( "+----[ %s ]", name );
         if( !strcmp( psz_variable, "zoom" ) )
         {
-            for ( int i = 0; i < val.p_list->i_count; i++ )
+            for ( size_t i = 0; i < count; i++ )
             {
-                if ( f_value == val.p_list->p_values[i].f_float )
-                    msg_rc( "| %f - %s *", val.p_list->p_values[i].f_float,
-                            text.p_list->p_values[i].psz_string );
-                else
-                    msg_rc( "| %f - %s", val.p_list->p_values[i].f_float,
-                            text.p_list->p_values[i].psz_string );
+                msg_rc( "| %f - %s%s", val[i].f_float, text[i],
+                        f_value == val[i].f_float ? " *" : "" );
+                free(text[i]);
             }
         }
         else
         {
-            for ( int i = 0; i < val.p_list->i_count; i++ )
+            for ( size_t i = 0; i < count; i++ )
             {
-                if ( !strcmp( psz_value, val.p_list->p_values[i].psz_string ) )
-                    msg_rc( "| %s - %s *", val.p_list->p_values[i].psz_string,
-                            text.p_list->p_values[i].psz_string );
-                else
-                    msg_rc( "| %s - %s", val.p_list->p_values[i].psz_string,
-                            text.p_list->p_values[i].psz_string );
+                msg_rc( "| %s - %s%s", val[i].psz_string, text[i],
+                       strcmp(psz_value, val[i].psz_string)
+                           ? "" : " *" );
+                free(text[i]);
+                free(val[i].psz_string);
             }
             free( psz_value );
         }
-        var_FreeList( &val, &text );
-        msg_rc( "+----[ end of %s ]", val_name.psz_string );
+        free(text);
+        free(val);
+        msg_rc( "+----[ end of %s ]", name );
 
-        free( val_name.psz_string );
+        free( name );
     }
     vlc_object_release( p_vout );
     return i_error;
@@ -1663,9 +1651,12 @@ static int AudioChannel( vlc_object_t *obj, char const *cmd,
     if ( !*cur.psz_string )
     {
         /* Retrieve all registered ***. */
-        vlc_value_t val, text;
-        if ( var_Change( p_aout, "stereo-mode",
-                         VLC_VAR_GETCHOICES, &val, &text ) < 0 )
+        vlc_value_t *val;
+        char **text;
+        size_t count;
+
+        if ( var_Change( p_aout, "stereo-mode", VLC_VAR_GETCHOICES,
+                         &count, &val, &text ) < 0 )
         {
             ret = VLC_ENOVAR;
             goto out;
@@ -1674,16 +1665,14 @@ static int AudioChannel( vlc_object_t *obj, char const *cmd,
         int i_value = var_GetInteger( p_aout, "stereo-mode" );
 
         msg_rc( "+----[ %s ]", cmd );
-        for ( int i = 0; i < val.p_list->i_count; i++ )
+        for ( size_t i = 0; i < count; i++ )
         {
-            if ( i_value == val.p_list->p_values[i].i_int )
-                msg_rc( "| %"PRId64" - %s *", val.p_list->p_values[i].i_int,
-                        text.p_list->p_values[i].psz_string );
-            else
-                msg_rc( "| %"PRId64" - %s", val.p_list->p_values[i].i_int,
-                        text.p_list->p_values[i].psz_string );
+            msg_rc( "| %"PRId64" - %s%s", val[i].i_int, text[i],
+                    i_value == val[i].i_int ? " *" : "" );
+            free(text[i]);
         }
-        var_FreeList( &val, &text );
+        free(text);
+        free(val);
         msg_rc( "+----[ end of %s ]", cmd );
     }
     else
@@ -1757,18 +1746,20 @@ static int updateStatistics( intf_thread_t *p_intf, input_item_t *p_item )
 }
 
 #if defined(_WIN32) && !VLC_WINSTORE_APP
-static bool ReadWin32( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
+static bool ReadWin32( intf_thread_t *p_intf, unsigned char *p_buffer, int *pi_size )
 {
     INPUT_RECORD input_record;
     DWORD i_dw;
 
     /* On Win32, select() only works on socket descriptors */
     while( WaitForSingleObjectEx( p_intf->p_sys->hConsoleIn,
-                                INTF_IDLE_SLEEP/1000, TRUE ) == WAIT_OBJECT_0 )
+                                MS_FROM_VLC_TICK(INTF_IDLE_SLEEP), TRUE ) == WAIT_OBJECT_0 )
     {
-        while( *pi_size < MAX_LINE_LENGTH &&
-               ReadConsoleInput( p_intf->p_sys->hConsoleIn, &input_record,
-                                 1, &i_dw ) )
+        // Prefer to fail early when there's not enough space to store a 4 bytes
+        // UTF8 character. The function will be immediatly called again and we won't
+        // lose an input
+        while( *pi_size < MAX_LINE_LENGTH - 4 &&
+               ReadConsoleInput( p_intf->p_sys->hConsoleIn, &input_record, 1, &i_dw ) )
         {
             if( input_record.EventType != KEY_EVENT ||
                 !input_record.Event.KeyEvent.bKeyDown ||
@@ -1780,42 +1771,58 @@ static bool ReadWin32( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
                 /* nothing interesting */
                 continue;
             }
-
-            p_buffer[ *pi_size ] = input_record.Event.KeyEvent.uChar.AsciiChar;
-
-            /* Echo out the command */
-            putc( p_buffer[ *pi_size ], stdout );
-
-            /* Handle special keys */
-            if( p_buffer[ *pi_size ] == '\r' || p_buffer[ *pi_size ] == '\n' )
+            if( input_record.Event.KeyEvent.uChar.AsciiChar == '\n' ||
+                input_record.Event.KeyEvent.uChar.AsciiChar == '\r' )
             {
                 putc( '\n', stdout );
                 break;
             }
-            switch( p_buffer[ *pi_size ] )
+            switch( input_record.Event.KeyEvent.uChar.AsciiChar )
             {
             case '\b':
-                if( *pi_size )
+                if ( *pi_size == 0 )
+                    break;
+                if ( *pi_size > 1 && (p_buffer[*pi_size - 1] & 0xC0) == 0x80 )
                 {
-                    *pi_size -= 2;
-                    putc( ' ', stdout );
-                    putc( '\b', stdout );
+                    // pi_size currently points to the character to be written, so
+                    // we need to roll back from 2 bytes to start erasing the previous
+                    // character
+                    (*pi_size) -= 2;
+                    unsigned int nbBytes = 1;
+                    while( *pi_size > 0 && (p_buffer[*pi_size] & 0xC0) == 0x80 )
+                    {
+                        (*pi_size)--;
+                        nbBytes++;
+                    }
+                    assert( clz( (unsigned char)~(p_buffer[*pi_size]) ) == nbBytes + 1 );
+                    // The first utf8 byte will be overriden by a \0
                 }
+                else
+                    (*pi_size)--;
+                p_buffer[*pi_size] = 0;
+
+                fputs( "\b \b", stdout );
                 break;
-            case '\r':
-                (*pi_size) --;
-                break;
+            default:
+            {
+                WCHAR psz_winput[] = { input_record.Event.KeyEvent.uChar.UnicodeChar, L'\0' };
+                char* psz_input = FromWide( psz_winput );
+                int input_size = strlen(psz_input);
+                if ( *pi_size + input_size > MAX_LINE_LENGTH )
+                {
+                    p_buffer[ *pi_size ] = 0;
+                    return false;
+                }
+                strcpy( (char*)&p_buffer[*pi_size], psz_input );
+                utf8_fprintf( stdout, "%s", psz_input );
+                free(psz_input);
+                *pi_size += input_size;
             }
-
-            (*pi_size)++;
+            }
         }
 
-        if( *pi_size == MAX_LINE_LENGTH ||
-            p_buffer[ *pi_size ] == '\r' || p_buffer[ *pi_size ] == '\n' )
-        {
-            p_buffer[ *pi_size ] = 0;
-            return true;
-        }
+        p_buffer[ *pi_size ] = 0;
+        return true;
     }
 
     vlc_testcancel ();
@@ -1828,10 +1835,10 @@ bool ReadCommand( intf_thread_t *p_intf, char *p_buffer, int *pi_size )
 {
 #if defined(_WIN32) && !VLC_WINSTORE_APP
     if( p_intf->p_sys->i_socket == -1 && !p_intf->p_sys->b_quiet )
-        return ReadWin32( p_intf, p_buffer, pi_size );
+        return ReadWin32( p_intf, (unsigned char*)p_buffer, pi_size );
     else if( p_intf->p_sys->i_socket == -1 )
     {
-        msleep( INTF_IDLE_SLEEP );
+        vlc_tick_sleep( INTF_IDLE_SLEEP );
         return false;
     }
 #endif

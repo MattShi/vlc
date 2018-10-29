@@ -421,6 +421,103 @@ void libvlc_video_set_callbacks( libvlc_media_player_t *mp,
                                  libvlc_video_display_cb display,
                                  void *opaque );
 
+
+/**
+ * Callback prototype called to initialize user data.
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \return true on success
+ * \version LibVLC 4.0.0 or later
+ */
+typedef bool (*libvlc_gl_setup_cb)(void* opaque);
+
+
+/**
+ * Callback prototype called to release user data
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \version LibVLC 4.0.0 or later
+ */
+typedef void (*libvlc_gl_cleanup_cb)(void* opaque);
+
+/**
+ * Callback prototype called on video size changes
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \param width video width in pixel [IN]
+ * \param height video height in pixel [IN]
+ * \version LibVLC 4.0.0 or later
+ */
+typedef void (*libvlc_gl_resize_cb)(void* opaque, unsigned width, unsigned height);
+
+
+/**
+ * Callback prototype called after performing drawing calls.
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \version LibVLC 4.0.0 or later
+ */
+typedef void (*libvlc_gl_swap_cb)(void* opaque);
+
+/**
+ * Callback prototype to set up the OpenGL context for rendering
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \param enter true to set the context as current, false to unset it [IN]
+ * \return true on success
+ * \version LibVLC 4.0.0 or later
+ */
+typedef bool (*libvlc_gl_makeCurrent_cb)(void* opaque, bool enter);
+
+/**
+ * Callback prototype to load opengl functions
+ *
+ * \param opaque private pointer passed to the @a libvlc_video_set_opengl_callbacks() [IN]
+ * \param fct_name name of the opengl function to load
+ * \return a pointer to the named OpenGL function the NULL otherwise
+ * \version LibVLC 4.0.0 or later
+ */
+typedef void* (*libvlc_gl_getProcAddress_cb)(void* opaque, const char* fct_name);
+
+/**
+ * Enumeration of the OpenGL engine to be used
+ * can be passed to @a libvlc_video_set_opengl_callbacks
+ */
+typedef enum libvlc_gl_engine_t {
+    libvlc_gl_engine_opengl,
+    libvlc_gl_engine_gles2
+} libvlc_gl_engine_t;
+
+/**
+ * Set callbacks and data to render decoded video to a custom OpenGL texture
+ *
+ * \warning VLC will perform video rendering in its own thread and at its own rate,
+ * You need to provide your own synchronisation mechanism.
+ *
+ * OpenGL context need to be created before playing a media.
+ *
+ * \param mp the media player
+ * \param gl_engine the OpenGL engine to use
+ * \param setup_cb callback called to initialize user data
+ * \param cleanup_cb callback called to clean up user data
+ * \param resize_cb callback called to get the size of the video
+ * \param swap_cb callback called after rendering a video frame (cannot be NULL)
+ * \param makeCurrent_cb callback called to enter/leave the opengl context (cannot be NULL)
+ * \param getProcAddress_cb opengl function loading callback (cannot be NULL)
+ * \param opaque private pointer passed to callbacks
+ * \version LibVLC 4.0.0 or later
+ */
+LIBVLC_API
+void libvlc_video_set_opengl_callbacks( libvlc_media_player_t *mp,
+                                        libvlc_gl_engine_t gl_engine,
+                                        libvlc_gl_setup_cb setup_cb,
+                                        libvlc_gl_cleanup_cb cleanup_cb,
+                                        libvlc_gl_resize_cb resize_cb,
+                                        libvlc_gl_swap_cb swap_cb,
+                                        libvlc_gl_makeCurrent_cb makeCurrent_cb,
+                                        libvlc_gl_getProcAddress_cb getProcAddress_cb,
+                                        void* opaque );
+
 /**
  * Set decoded video chroma and dimensions.
  * This only works in combination with libvlc_video_set_callbacks(),
@@ -785,9 +882,12 @@ LIBVLC_API libvlc_time_t libvlc_media_player_get_time( libvlc_media_player_t *p_
  * Not all formats and protocols support this.
  *
  * \param p_mi the Media Player
+ * \param b_fast prefer fast seeking or precise seeking
  * \param i_time the movie time (in ms).
+ * \return 0 on success, -1 on error
  */
-LIBVLC_API void libvlc_media_player_set_time( libvlc_media_player_t *p_mi, libvlc_time_t i_time );
+LIBVLC_API int libvlc_media_player_set_time( libvlc_media_player_t *p_mi,
+                                             libvlc_time_t i_time, bool b_fast );
 
 /**
  * Get movie position as percentage between 0.0 and 1.0.
@@ -803,9 +903,12 @@ LIBVLC_API float libvlc_media_player_get_position( libvlc_media_player_t *p_mi )
  * This might not work depending on the underlying input format and protocol.
  *
  * \param p_mi the Media Player
+ * \param b_fast prefer fast seeking or precise seeking
  * \param f_pos the position
+ * \return 0 on success, -1 on error
  */
-LIBVLC_API void libvlc_media_player_set_position( libvlc_media_player_t *p_mi, float f_pos );
+LIBVLC_API int libvlc_media_player_set_position( libvlc_media_player_t *p_mi,
+                                                 float f_pos, bool b_fast );
 
 /**
  * Set movie chapter (if applicable).
@@ -1406,10 +1509,13 @@ int libvlc_video_take_snapshot( libvlc_media_player_t *p_mi, unsigned num,
  * Enable or disable deinterlace filter
  *
  * \param p_mi libvlc media player
- * \param psz_mode type of deinterlace filter, NULL to disable
+ * \param deinterlace state -1: auto (default), 0: disabled, 1: enabled
+ * \param psz_mode type of deinterlace filter, NULL for current/default filter
+ * \version LibVLC 4.0.0 and later
  */
 LIBVLC_API void libvlc_video_set_deinterlace( libvlc_media_player_t *p_mi,
-                                                  const char *psz_mode );
+                                              int deinterlace,
+                                              const char *psz_mode );
 
 /**
  * Get an integer marquee option value

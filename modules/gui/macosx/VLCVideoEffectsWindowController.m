@@ -28,6 +28,7 @@
 #import "VLCTextfieldPanelController.h"
 #import "VLCCoreInteraction.h"
 #import "VLCHexNumberFormatter.h"
+#import "NSString+Helpers.h"
 
 #define getWidgetBoolValue(w)   ((vlc_value_t){ .b_bool = [w state] })
 #define getWidgetIntValue(w)    ((vlc_value_t){ .i_int = [w intValue] })
@@ -189,13 +190,14 @@
     [self.window setExcludedFromWindowsMenu:YES];
     [self.window setCollectionBehavior: NSWindowCollectionBehaviorFullScreenAuxiliary];
 
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"basic"]] setLabel:_NS("Basic")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"crop"]] setLabel:_NS("Crop")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"geometry"]] setLabel:_NS("Geometry")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"color"]] setLabel:_NS("Color")];
-    [[_tabView tabViewItemAtIndex:[_tabView indexOfTabViewItemWithIdentifier:@"misc"]] setLabel:_NS("Miscellaneous")];
+    [_segmentView setLabel:_NS("Basic") forSegment:0];
+    [_segmentView setLabel:_NS("Crop") forSegment:1];
+    [_segmentView setLabel:_NS("Geometry") forSegment:2];
+    [_segmentView setLabel:_NS("Color") forSegment:3];
+    [_segmentView setLabel:_NS("Miscellaneous") forSegment:4];
 
     [_applyProfileCheckbox setState:[[NSUserDefaults standardUserDefaults] boolForKey:@"VideoEffectApplyProfileOnStartup"]];
+    [_applyProfileCheckbox setTitle:_NS("Apply profile at next launch")];
 
     [self resetProfileSelector];
 
@@ -327,8 +329,6 @@
     [[_addLogoPositionPopup lastItem] setTag: 10];
     [_addLogoTransparencyLabel setStringValue:_NS("Transparency")];
 
-    [_tabView selectFirstTabViewItem:self];
-
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(inputChangedEvent:)
                                                  name:VLCInputChangedNotification
@@ -382,7 +382,6 @@
 
 - (void)resetProfileSelector
 {
-    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [_profilePopup removeAllItems];
 
     // Ignore "Default" index 0 from settings
@@ -435,17 +434,17 @@
     {
         if ([widget isKindOfClass: [NSSlider class]])
         {
-            [widget setIntValue: val.i_int];
+            [widget setIntValue: (int)val.i_int];
             [widget setToolTip: [NSString stringWithFormat:@"%lli", val.i_int]];
         }
         else if ([widget isKindOfClass: [NSButton class]])
             [widget setState: val.i_int ? NSOnState : NSOffState];
         else if ([widget isKindOfClass: [NSTextField class]])
-            [widget setIntValue: val.i_int];
+            [widget setIntValue: (int)val.i_int];
         else if ([widget isKindOfClass: [NSStepper class]])
-            [widget setIntValue: val.i_int];
+            [widget setIntValue: (int)val.i_int];
         else if ([widget isKindOfClass: [NSPopUpButton class]])
-            [widget selectItemWithTag: val.i_int];
+            [widget selectItemWithTag: (int)val.i_int];
     }
     else if (i_type == VLC_VAR_FLOAT)
     {
@@ -480,8 +479,6 @@
 {
     intf_thread_t *p_intf = getIntf();
     playlist_t *p_playlist = pl_Get(p_intf);
-    NSString *tmpString;
-    char *tmpChar;
     BOOL b_state;
 
     /* do we have any filter enabled? if yes, show it. */
@@ -761,7 +758,7 @@
     if ([self.window isKeyWindow])
         [self.window orderOut:sender];
     else {
-        [self.window setLevel: [[[VLCMain sharedInstance] voutController] currentStatusWindowLevel]];
+        [self.window setLevel: [[[VLCMain sharedInstance] voutProvider] currentStatusWindowLevel]];
         [self.window makeKeyAndOrderFront:sender];
     }
 }
@@ -779,14 +776,7 @@
 - (void)addProfile:(id)sender
 {
     /* show panel */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpartial-availability"
-#ifdef MAC_OS_X_VERSION_10_10
-    if (OSX_YOSEMITE_AND_HIGHER) {
-        [[_textfieldPanel window] setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameVibrantDark]];
-    }
-#endif
-#pragma clang diagnostic pop
+    [[_textfieldPanel window] setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameVibrantDark]];
     [_textfieldPanel setTitleString:_NS("Duplicate current profile for a new profile")];
     [_textfieldPanel setSubTitleString:_NS("Enter a name for the new profile:")];
     [_textfieldPanel setCancelButtonString:_NS("Cancel")];
@@ -798,7 +788,7 @@
 
         NSInteger currentProfileIndex = [_self currentProfileIndex];
         if (returnCode != NSModalResponseOK) {
-            [_profilePopup selectItemAtIndex:currentProfileIndex];
+            [self->_profilePopup selectItemAtIndex:currentProfileIndex];
             return;
         }
 
@@ -807,17 +797,14 @@
 
         // duplicate names are not allowed in the popup control
         if ([resultingText length] == 0 || [profileNames containsObject:resultingText]) {
-            [_profilePopup selectItemAtIndex:currentProfileIndex];
+            [self->_profilePopup selectItemAtIndex:currentProfileIndex];
 
             NSAlert *alert = [[NSAlert alloc] init];
             [alert setAlertStyle:NSCriticalAlertStyle];
             [alert setMessageText:_NS("Please enter a unique name for the new profile.")];
             [alert setInformativeText:_NS("Multiple profiles with the same name are not allowed.")];
-
             [alert beginSheetModalForWindow:_self.window
-                              modalDelegate:nil
-                             didEndSelector:nil
-                                contextInfo:nil];
+                          completionHandler:nil];
             return;
         }
 
@@ -847,14 +834,7 @@
 - (void)removeProfile:(id)sender
 {
     /* show panel */
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wpartial-availability"
-#ifdef MAC_OS_X_VERSION_10_10
-    if (OSX_YOSEMITE_AND_HIGHER) {
-        [[_popupPanel window] setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameVibrantDark]];
-    }
-#endif
-#pragma clang diagnostic pop
+    [[_popupPanel window] setAppearance:[NSAppearance appearanceNamed:NSAppearanceNameVibrantDark]];
     [_popupPanel setTitleString:_NS("Remove a preset")];
     [_popupPanel setSubTitleString:_NS("Select the preset you would like to remove:")];
     [_popupPanel setOkButtonString:_NS("Remove")];
@@ -869,7 +849,7 @@
         NSInteger activeProfileIndex = [_self currentProfileIndex];
 
         if (returnCode != NSModalResponseOK) {
-            [_profilePopup selectItemAtIndex:activeProfileIndex];
+            [self->_profilePopup selectItemAtIndex:activeProfileIndex];
             return;
         }
 

@@ -91,14 +91,14 @@ struct  ci_filters_ctx
     filter_t *                  dst_converter;
 };
 
-struct filter_sys_t
+typedef struct filter_sys_t
 {
     char const *                psz_filter;
     bool                        mouse_moved;
     vlc_mouse_t                 old_mouse;
     vlc_mouse_t                 mouse;
     struct ci_filters_ctx *     ctx;
-};
+} filter_sys_t;
 
 struct  range
 {
@@ -356,10 +356,11 @@ static void filter_PsychedelicControl(filter_t *filter, struct filter_chain *fch
 static picture_t *
 Filter(filter_t *filter, picture_t *src)
 {
-    struct ci_filters_ctx *ctx = filter->p_sys->ctx;
+    filter_sys_t *p_sys = filter->p_sys;
+    struct ci_filters_ctx *ctx = p_sys->ctx;
     enum filter_type filter_types[NUM_MAX_EQUIVALENT_VLC_FILTERS];
 
-    filter_desc_table_GetFilterTypes(filter->p_sys->psz_filter, filter_types);
+    filter_desc_table_GetFilterTypes(p_sys->psz_filter, filter_types);
     if (ctx->fchain->filter != filter_types[0])
         return src;
 
@@ -425,14 +426,14 @@ Filter(filter_t *filter, picture_t *src)
             return NULL;
     }
 
-    filter->p_sys->mouse_moved = false;
+    p_sys->mouse_moved = false;
     return dst;
 
 error:
     if (dst)
         picture_Release(dst);
     picture_Release(src);
-    filter->p_sys->mouse_moved = false;
+    p_sys->mouse_moved = false;
     return NULL;
 }
 
@@ -544,6 +545,11 @@ static picture_t *CVPX_to_CVPX_converter_BufferNew(filter_t *p_filter)
     return picture_NewFromFormat(&p_filter->fmt_out.video);
 }
 
+static const struct filter_video_callbacks image_filter_cbs =
+{
+    .buffer_new = CVPX_to_CVPX_converter_BufferNew,
+};
+
 static filter_t *
 CVPX_to_CVPX_converter_Create(filter_t *filter, bool to_rgba)
 {
@@ -565,8 +571,7 @@ CVPX_to_CVPX_converter_Create(filter_t *filter, bool to_rgba)
         converter->fmt_in.i_codec = VLC_CODEC_CVPX_BGRA;
     }
 
-    converter->owner.video.buffer_new = CVPX_to_CVPX_converter_BufferNew;
-
+    converter->owner.video = &image_filter_cbs;
 
     converter->p_module = module_need(converter, "video converter", NULL, false);
     if (!converter->p_module)
@@ -599,7 +604,7 @@ Open(vlc_object_t *obj, char const *psz_filter)
             return VLC_EGENERIC;
     }
 
-    filter->p_sys = calloc(1, sizeof(filter_sys_t));
+    filter_sys_t *p_sys = filter->p_sys = calloc(1, sizeof(filter_sys_t));
     if (!filter->p_sys)
         return VLC_ENOMEM;
 
@@ -637,7 +642,10 @@ Open(vlc_object_t *obj, char const *psz_filter)
         ctx->ci_ctx = [CIContext contextWithCGLContext: glctx
                                            pixelFormat: nil
                                             colorSpace: nil
-                                               options: nil];
+                                               options: @{
+                                                kCIContextWorkingColorSpace : [NSNull null],
+                                                kCIContextOutputColorSpace : [NSNull null],
+                                               }];
 #else
         CVEAGLContext eaglctx = var_InheritAddress(filter, "ios-eaglcontext");
         if (!eaglctx)
@@ -663,8 +671,8 @@ Open(vlc_object_t *obj, char const *psz_filter)
     else if (Open_CreateFilters(filter, &ctx->fchain, filter_types))
         goto error;
 
-    filter->p_sys->psz_filter = psz_filter;
-    filter->p_sys->ctx = ctx;
+    p_sys->psz_filter = psz_filter;
+    p_sys->ctx = ctx;
 
     filter->pf_video_filter = Filter;
     filter->pf_video_mouse = Mouse;
@@ -679,7 +687,7 @@ error:
             CVPixelBufferPoolRelease(ctx->cvpx_pool);
         free(ctx);
     }
-    free(filter->p_sys);
+    free(p_sys);
     return VLC_EGENERIC;
 }
 
@@ -729,10 +737,11 @@ static void
 Close(vlc_object_t *obj)
 {
     filter_t *filter = (filter_t *)obj;
-    struct ci_filters_ctx *ctx = filter->p_sys->ctx;
+    filter_sys_t *p_sys = filter->p_sys;
+    struct ci_filters_ctx *ctx = p_sys->ctx;
     enum filter_type filter_types[NUM_MAX_EQUIVALENT_VLC_FILTERS];
 
-    filter_desc_table_GetFilterTypes(filter->p_sys->psz_filter, filter_types);
+    filter_desc_table_GetFilterTypes(p_sys->psz_filter, filter_types);
     for (unsigned int i = 0;
          i < NUM_MAX_EQUIVALENT_VLC_FILTERS && filter_types[i] != FILTER_NONE;
          ++i)
@@ -746,7 +755,7 @@ Close(vlc_object_t *obj)
         free(ctx);
         var_Destroy(filter->obj.parent, "ci-filters-ctx");
     }
-    free(filter->p_sys);
+    free(p_sys);
 }
 
 #define CI_CUSTOM_FILTER_TEXT N_("Use a specific Core Image Filter")

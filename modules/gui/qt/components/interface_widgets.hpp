@@ -47,6 +47,7 @@
 
 class QMenu;
 class QSlider;
+class QTimer;
 class QWidgetAction;
 class SpeedControlWidget;
 struct vout_window_t;
@@ -84,14 +85,20 @@ private:
 
     QWidget *stable;
     QLayout *layout;
+    QTimer *cursorTimer;
+    int cursorTimeout;
 
     void reportSize();
+    void showCursor();
 
 signals:
     void sizeChanged( int, int );
 
 public slots:
     void setSize( unsigned int, unsigned int );
+
+private slots:
+    void hideCursor();
 };
 
 /******************** Background Widget ****************/
@@ -198,15 +205,18 @@ protected:
 private:
     intf_thread_t *p_intf;
     bool b_remainingTime;
+    float cachedPos;
+    vlc_tick_t cachedTime;
     int cachedLength;
     TimeLabel::Display displayType;
 
     char psz_length[MSTRTIME_MAX_SIZE];
     char psz_time[MSTRTIME_MAX_SIZE];
     void toggleTimeDisplay();
+    void refresh();
 private slots:
     void setRemainingTime( bool );
-    void setDisplayPosition( float pos, int64_t time, int length );
+    void setDisplayPosition( float pos, vlc_tick_t time, int length );
     void setDisplayPosition( float pos );
 signals:
     void broadcastRemainingTime( bool );

@@ -82,7 +82,7 @@ void ProbePES( demux_t *p_demux, ts_pid_t *pid, const uint8_t *p_pesstart, size_
         return;
 
     size_t i_pesextoffset = 8;
-    mtime_t i_dts = -1;
+    stime_t i_dts = -1;
     if( p_pes[7] & 0x80 ) // PTS
     {
         i_pesextoffset += 5;
@@ -166,24 +166,15 @@ void ProbePES( demux_t *p_demux, ts_pid_t *pid, const uint8_t *p_pesstart, size_
     else if(i_stream_id >= 0xC0 && i_stream_id <= 0xDF)
     {
         pid->probed.i_cat = AUDIO_ES;
-        if( p_data[0] == 0xFF && (p_data[1] & 0xE0) == 0xE0 )
+        if( p_data[0] == 0xFF && (p_data[1] & 0xE0) == 0xE0 &&
+           (p_data[1] & 0x0C) != 0x04 && (p_data[1] & 0x03) == 0x00 )
         {
-            switch(p_data[1] & 6)
-            {
-            /* 01 - Layer III
-               10 - Layer II
-               11 - Layer I */
-                case 0x06:
-                    pid->probed.i_fourcc = VLC_CODEC_MPGA;
-                    break;
-                case 0x04:
-                    pid->probed.i_fourcc = VLC_CODEC_MP2;
-                    break;
-                case 0x02:
-                    pid->probed.i_fourcc = VLC_CODEC_MP3;
-                default:
-                    break;
-            }
+            pid->probed.i_fourcc = VLC_CODEC_MPGA;
+        }
+        else if( p_data[0] == 0xFF && (p_data[1] & 0xF2) == 0xF0 )
+        {
+            pid->probed.i_fourcc = VLC_CODEC_MP4A; /* ADTS */
+            pid->probed.i_original_fourcc = VLC_FOURCC('A','D','T','S');
         }
     }
     /* VIDEO STREAM */
@@ -323,6 +314,7 @@ void MissingPATPMTFixup( demux_t *p_demux )
                 continue;
 
             es_format_Init(&esstreams[j].fmt, p_pid->probed.i_cat, p_pid->probed.i_fourcc);
+            esstreams[j].fmt.i_original_fourcc = p_pid->probed.i_original_fourcc;
 
             if( VLC_SUCCESS !=
                 FillPMTESParams(mux_standard, &esstreams[j].fmt, &esstreams[j].ts, &esstreams[j].pes ) )

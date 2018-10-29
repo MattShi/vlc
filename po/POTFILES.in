@@ -31,7 +31,7 @@ include/vlc_md5.h
 include/vlc_messages.h
 include/vlc_meta.h
 include/vlc_modules.h
-include/vlc_mtime.h
+include/vlc_tick.h
 include/vlc_network.h
 include/vlc_objects.h
 include/vlc_pgpkey.h
@@ -68,8 +68,6 @@ src/config/intf.c
 src/darwin/error.c
 src/extras/libc.c
 src/input/access.c
-src/input/clock.c
-src/input/clock.h
 src/input/control.c
 src/input/decoder.c
 src/input/decoder.h
@@ -143,7 +141,6 @@ src/video_output/interlacing.c
 src/video_output/video_output.c
 src/video_output/video_text.c
 src/video_output/video_widgets.c
-src/video_output/vout_control.h
 src/video_output/vout_internal.h
 src/video_output/vout_intf.c
 src/video_output/vout_subpictures.c
@@ -163,11 +160,9 @@ lib/media_list_player.c
 lib/media_player.c
 lib/playlist.c
 lib/video.c
-lib/vlm.c
 
 # modules
 modules/access/alsa.c
-modules/access/attachment.c
 modules/access/avcapture.m
 modules/access/avio.h
 modules/access/bluray.c
@@ -204,7 +199,7 @@ modules/access/pulse.c
 modules/access/qtsound.m
 modules/access/rdp.c
 modules/access/rtp/rtp.c
-modules/access/rtsp/access.c
+modules/access/samba.c
 modules/access/satip.c
 modules/access/screen/screen.c
 modules/access/screen/wayland.c
@@ -212,12 +207,13 @@ modules/access/screen/xcb.c
 modules/access/sdp.c
 modules/access/sftp.c
 modules/access/shm.c
-modules/access/smb.c
 modules/access/smb_common.h
+modules/access/smb2.c
 modules/access/srt.c
 modules/access/tcp.c
 modules/access/timecode.c
 modules/access/udp.c
+modules/access/unc.c
 modules/access/v4l2/controls.c
 modules/access/v4l2/v4l2.c
 modules/access/vcd/vcd.c
@@ -410,7 +406,7 @@ modules/demux/mpeg/h26x.c
 modules/demux/mpeg/mpgv.c
 modules/demux/mpeg/ps.c
 modules/demux/mpeg/ts.c
-modules/demux/mpeg/ts_psi.c
+modules/demux/mpeg/ts_descriptions.h
 modules/demux/nsc.c
 modules/demux/nsv.c
 modules/demux/nuv.c
@@ -429,14 +425,12 @@ modules/demux/playlist/podcast.c
 modules/demux/playlist/qtl.c
 modules/demux/playlist/ram.c
 modules/demux/playlist/sgimb.c
-modules/demux/playlist/shoutcast.c
 modules/demux/playlist/wpl.c
 modules/demux/playlist/xspf.c
 modules/demux/pva.c
 modules/demux/rawaud.c
 modules/demux/rawdv.c
 modules/demux/rawvid.c
-modules/demux/real.c
 modules/demux/sid.cpp
 modules/demux/smf.c
 modules/demux/stl.c
@@ -503,8 +497,6 @@ modules/gui/macosx/VLCMainWindow.h
 modules/gui/macosx/VLCMainWindow.m
 modules/gui/macosx/VLCMainWindowControlsBar.h
 modules/gui/macosx/VLCMainWindowControlsBar.m
-modules/gui/macosx/VLCMainWindowTitleView.h
-modules/gui/macosx/VLCMainWindowTitleView.m
 modules/gui/macosx/VLCOpenWindowController.h
 modules/gui/macosx/VLCOpenWindowController.m
 modules/gui/macosx/VLCOutput.h
@@ -549,26 +541,26 @@ modules/gui/macosx/VLCTimeField.h
 modules/gui/macosx/VLCTimeField.m
 modules/gui/macosx/VLCTimeSelectionPanelController.h
 modules/gui/macosx/VLCTimeSelectionPanelController.m
-modules/gui/macosx/VLCTintedImageButtonCell.h
-modules/gui/macosx/VLCTintedImageButtonCell.m
 modules/gui/macosx/VLCTrackSynchronizationWindowController.h
 modules/gui/macosx/VLCTrackSynchronizationWindowController.m
 modules/gui/macosx/VLCUIWidgets.h
 modules/gui/macosx/VLCUIWidgets.m
 modules/gui/macosx/VLCVideoEffectsWindowController.h
 modules/gui/macosx/VLCVideoEffectsWindowController.m
+modules/gui/macosx/VLCVideoWindowCommon.h
+modules/gui/macosx/VLCVideoWindowCommon.m
 modules/gui/macosx/VLCVolumeSlider.h
 modules/gui/macosx/VLCVolumeSlider.m
 modules/gui/macosx/VLCVolumeSliderCell.h
 modules/gui/macosx/VLCVolumeSliderCell.m
 modules/gui/macosx/VLCVoutView.h
 modules/gui/macosx/VLCVoutView.m
-modules/gui/macosx/VLCVoutWindowController.h
-modules/gui/macosx/VLCVoutWindowController.m
+modules/gui/macosx/VLCVideoOutputProvider.h
+modules/gui/macosx/VLCVideoOutputProvider.m
+modules/gui/macosx/VLCWindow.h
+modules/gui/macosx/VLCWindow.m
 modules/gui/macosx/VLCWrappableTextField.h
 modules/gui/macosx/VLCWrappableTextField.m
-modules/gui/macosx/Windows.h
-modules/gui/macosx/Windows.m
 modules/gui/macosx/applescript.h
 modules/gui/macosx/applescript.m
 modules/gui/macosx/helpers.h
@@ -600,6 +592,8 @@ modules/gui/qt/components/controller.cpp
 modules/gui/qt/components/controller.hpp
 modules/gui/qt/components/controller_widget.cpp
 modules/gui/qt/components/controller_widget.hpp
+modules/gui/qt/components/custom_menus.cpp
+modules/gui/qt/components/custom_menus.hpp
 modules/gui/qt/components/epg/EPGChannels.cpp
 modules/gui/qt/components/epg/EPGChannels.hpp
 modules/gui/qt/components/epg/EPGItem.cpp
@@ -993,8 +987,9 @@ modules/misc/audioscrobbler.c
 modules/misc/fingerprinter.c
 modules/misc/gnutls.c
 modules/misc/inhibit/dbus.c
+modules/misc/inhibit/wl-idle-inhibit.c
 modules/misc/inhibit/xdg.c
-modules/misc/logger.c
+modules/misc/medialibrary/medialib.cpp
 modules/misc/playlist/export.c
 modules/misc/playlist/html.c
 modules/misc/playlist/m3u.c
@@ -1018,6 +1013,7 @@ modules/notify/osx_notifications.m
 modules/notify/notify.c
 modules/packetizer/a52.c
 modules/packetizer/avparser.h
+modules/packetizer/av1.c
 modules/packetizer/copy.c
 modules/packetizer/dts.c
 modules/packetizer/flac.c
@@ -1081,6 +1077,7 @@ modules/stream_out/rtp.c
 modules/stream_out/rtpfmt.c
 modules/stream_out/rtp.h
 modules/stream_out/rtsp.c
+modules/stream_out/sdi/sdiout.cpp
 modules/stream_out/setid.c
 modules/stream_out/smem.c
 modules/stream_out/stats.c
@@ -1095,7 +1092,6 @@ modules/text_renderer/tdummy.c
 modules/video_chroma/chain.c
 modules/video_chroma/cvpx.c
 modules/video_chroma/grey_yuv.c
-modules/video_chroma/i420_10_p010.c
 modules/video_chroma/i420_nv12.c
 modules/video_chroma/i420_rgb16.c
 modules/video_chroma/i420_rgb8.c
@@ -1181,7 +1177,6 @@ modules/video_output/win32/wingdi.c
 modules/video_output/win32/wgl.c
 modules/video_output/vdummy.c
 modules/video_output/vmem.c
-modules/video_output/wayland/shell.c
 modules/video_output/wayland/shm.c
 modules/video_output/wayland/xdg-shell.c
 modules/video_output/xcb/window.c

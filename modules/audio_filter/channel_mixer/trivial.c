@@ -46,10 +46,10 @@ vlc_module_begin ()
     set_callbacks( Create, Destroy )
 vlc_module_end ()
 
-struct filter_sys_t
+typedef struct
 {
     int channel_map[AOUT_CHAN_MAX];
-};
+} filter_sys_t;
 
 /**
  * Trivially upmixes
@@ -74,9 +74,11 @@ static block_t *Upmix( filter_t *p_filter, block_t *p_in_buf )
     p_out_buf->i_pts        = p_in_buf->i_pts;
     p_out_buf->i_length     = p_in_buf->i_length;
 
+    filter_sys_t *p_sys = p_filter->p_sys;
+
     float *p_dest = (float *)p_out_buf->p_buffer;
     const float *p_src = (float *)p_in_buf->p_buffer;
-    const int *channel_map = p_filter->p_sys->channel_map;
+    const int *channel_map = p_sys->channel_map;
 
     for( size_t i = 0; i < p_in_buf->i_nb_samples; i++ )
     {
@@ -101,9 +103,11 @@ static block_t *Downmix( filter_t *p_filter, block_t *p_buf )
 
     assert( i_input_nb >= i_output_nb );
 
+    filter_sys_t *p_sys = p_filter->p_sys;
+
     float *p_dest = (float *)p_buf->p_buffer;
     const float *p_src = p_dest;
-    const int *channel_map = p_filter->p_sys->channel_map;
+    const int *channel_map = p_sys->channel_map;
     /* Use an extra buffer to avoid overlapping */
     float buffer[i_output_nb];
 
@@ -157,6 +161,7 @@ static block_t *Extract( filter_t *p_filter, block_t *p_in_buf )
                          p_in_buf->i_nb_samples, pi_selections,
                          p_filter->fmt_out.audio.i_bitspersample );
 
+    block_Release( p_in_buf );
     return p_out_buf;
 }
 
@@ -193,7 +198,12 @@ static int Create( vlc_object_t *p_this )
      || infmt->i_rate != outfmt->i_rate
      || infmt->i_format != VLC_CODEC_FL32 )
         return VLC_EGENERIC;
-    if( infmt->i_physical_channels == outfmt->i_physical_channels )
+
+    /* trivial is the lowest priority converter: if chan_mode are different
+     * here, this filter will still need to convert channels (and ignore
+     * chan_mode). */
+    if( infmt->i_physical_channels == outfmt->i_physical_channels
+     && infmt->i_chan_mode == outfmt->i_chan_mode )
         return VLC_EGENERIC;
 
     p_filter->p_sys = NULL;
@@ -288,10 +298,11 @@ static int Create( vlc_object_t *p_this )
         }
     }
 
-    p_filter->p_sys = malloc( sizeof(*p_filter->p_sys) );
-    if(! p_filter->p_sys )
+    filter_sys_t *p_sys = malloc( sizeof(*p_sys) );
+    if( !p_sys )
         return VLC_ENOMEM;
-    memcpy( p_filter->p_sys->channel_map, channel_map, sizeof(channel_map) );
+    p_filter->p_sys = p_sys;
+    memcpy( p_sys->channel_map, channel_map, sizeof(channel_map) );
 
     if( aout_FormatNbChannels( outfmt ) > aout_FormatNbChannels( infmt ) )
         p_filter->pf_audio_filter = Upmix;

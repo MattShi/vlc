@@ -9,6 +9,15 @@ endif
 
 DEPS_libarchive = zlib
 
+LIBARCHIVE_CONF := $(HOSTCONF) \
+		--disable-bsdcpio --disable-bsdtar --disable-bsdcat \
+		--without-nettle --without-cng \
+		--without-xml2 --without-lzma --without-iconv --without-expat
+
+ifdef HAVE_WIN32
+LIBARCHIVE_CONF += --without-openssl
+endif
+
 $(TARBALLS)/libarchive-$(LIBARCHIVE_VERSION).tar.gz:
 	$(call download_pkg,$(LIBARCHIVE_URL),libarchive)
 
@@ -30,9 +39,6 @@ endif
 
 .libarchive: libarchive
 	$(RECONF)
-	cd $< && $(HOSTVARS) ./configure $(HOSTCONF) \
-		--disable-bsdcpio --disable-bsdtar --disable-bsdcat \
-		--without-nettle --without-cng \
-		--without-xml2 --without-lzma --without-iconv --without-expat
+	cd $< && $(HOSTVARS) ./configure $(LIBARCHIVE_CONF)
 	cd $< && $(MAKE) install
 	touch $@

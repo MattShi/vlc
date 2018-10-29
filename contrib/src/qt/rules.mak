@@ -1,7 +1,10 @@
 # Qt
 
-QT_VERSION := 5.6.3
-QT_URL := https://download.qt.io/official_releases/qt/5.6/$(QT_VERSION)/submodules/qtbase-opensource-src-$(QT_VERSION).tar.xz
+QT_VERSION_MAJOR := 5.11
+QT_VERSION := $(QT_VERSION_MAJOR).0
+# Insert potential -betaX suffix here:
+QT_VERSION_FULL := $(QT_VERSION)
+QT_URL := https://download.qt.io/official_releases/qt/$(QT_VERSION_MAJOR)/$(QT_VERSION_FULL)/submodules/qtbase-everywhere-src-$(QT_VERSION_FULL).tar.xz
 
 ifdef HAVE_MACOSX
 #PKGS += qt
@@ -14,66 +17,90 @@ ifeq ($(call need_pkg,"Qt5Core Qt5Gui Qt5Widgets"),)
 PKGS_FOUND += qt
 endif
 
-$(TARBALLS)/qt-$(QT_VERSION).tar.xz:
+$(TARBALLS)/qt-$(QT_VERSION_FULL).tar.xz:
 	$(call download,$(QT_URL))
 
-.sum-qt: qt-$(QT_VERSION).tar.xz
+.sum-qt: qt-$(QT_VERSION_FULL).tar.xz
 
-qt: qt-$(QT_VERSION).tar.xz .sum-qt
+qt: qt-$(QT_VERSION_FULL).tar.xz .sum-qt
 	$(UNPACK)
-	mv qtbase-opensource-src-$(QT_VERSION) qt-$(QT_VERSION)
-	$(APPLY) $(SRC)/qt/0001-Windows-QPA-Reimplement-calculation-of-window-frames_56.patch
-	$(APPLY) $(SRC)/qt/0002-Windows-QPA-Use-new-EnableNonClientDpiScaling-for-Wi_56.patch
-	$(APPLY) $(SRC)/qt/0003-QPA-prefer-lower-value-when-rounding-fractional-scaling.patch
-	$(APPLY) $(SRC)/qt/systray-no-sound.patch
+	mv qtbase-everywhere-src-$(QT_VERSION_FULL) qt-$(QT_VERSION_FULL)
+ifdef HAVE_WIN32
+	$(APPLY) $(SRC)/qt/0001-Windows-QPA-prefer-lower-value-when-rounding-fractio.patch
+	$(APPLY) $(SRC)/qt/0002-Windows-QPA-Disable-systray-notification-sounds.patch
+ifndef HAVE_WIN64
+	$(APPLY) $(SRC)/qt/0001-disable-qt_random_cpu.patch
+endif
+endif
 	$(MOVE)
 
+QT_OPENGL := -opengl desktop
+
 ifdef HAVE_MACOSX
-QT_PLATFORM := -platform darwin-g++
+QT_SPEC := darwin-g++
 endif
 ifdef HAVE_WIN32
+ifdef HAVE_CLANG
+QT_SPEC := win32-clang-g++
+else
 QT_SPEC := win32-g++
-QT_PLATFORM := -xplatform win32-g++ -device-option CROSS_COMPILE=$(HOST)-
+endif
+ifdef HAVE_CROSS_COMPILE
+QT_PLATFORM := -xplatform $(QT_SPEC) -device-option CROSS_COMPILE=$(HOST)-
+else
+ifneq ($(QT_SPEC),)
+QT_PLATFORM := -platform $(QT_SPEC)
+endif
+endif
+ifneq ($(findstring $(ARCH), arm aarch64),)
+# There is no opengl available on windows on these architectures.
+QT_OPENGL := -no-opengl
+endif
 endif
 
 QT_CONFIG := -static -opensource -confirm-license -no-pkg-config \
-	-no-sql-sqlite -no-gif -qt-libjpeg -no-openssl -no-opengl -no-dbus \
-	-no-qml-debug -no-audio-backend -no-sql-odbc -no-pch \
-	-no-compile-examples -nomake examples
+	-no-sql-sqlite -no-gif -qt-libjpeg -no-openssl $(QT_OPENGL) -no-dbus \
+	-no-sql-odbc -no-pch \
+	-no-compile-examples -nomake examples -qt-zlib
 
-ifndef WITH_OPTIMIZATION
-QT_CONFIG += -debug
-else
 QT_CONFIG += -release
-endif
 
 .qt: qt
 	cd $< && ./configure $(QT_PLATFORM) $(QT_CONFIG) -prefix $(PREFIX)
 	# Make && Install libraries
 	cd $< && $(MAKE)
-	cd $</src && $(MAKE) sub-corelib-install_subtargets sub-gui-install_subtargets sub-widgets-install_subtargets sub-platformsupport-install_subtargets sub-zlib-install_subtargets sub-bootstrap-install_subtargets
+	cd $< && $(MAKE) -C src sub-corelib-install_subtargets sub-gui-install_subtargets sub-widgets-install_subtargets sub-platformsupport-install_subtargets sub-zlib-install_subtargets sub-bootstrap-install_subtargets sub-network-install_subtargets sub-testlib-install_subtargets
 	# Install tools
-	cd $</src && $(MAKE) sub-moc-install_subtargets sub-rcc-install_subtargets sub-uic-install_subtargets
+	cd $< && $(MAKE) -C src sub-moc-install_subtargets sub-rcc-install_subtargets sub-uic-install_subtargets
 	# Install plugins
-	cd $</src/plugins && $(MAKE) sub-platforms-install_subtargets
+	cd $< && $(MAKE) -C src/plugins sub-platforms-install_subtargets
+ifdef HAVE_WIN32
+	cd $< && $(MAKE) -C src/plugins sub-imageformats-install_subtargets
+	mv $(PREFIX)/plugins/imageformats/libqjpeg.a $(PREFIX)/lib/
 	mv $(PREFIX)/plugins/platforms/libqwindows.a $(PREFIX)/lib/ && rm -rf $(PREFIX)/plugins
+	# Vista styling
+	cd $< && $(MAKE) -C src -C plugins sub-styles-install_subtargets
+	mv $(PREFIX)/plugins/styles/libqwindowsvistastyle.a $(PREFIX)/lib/ && rm -rf $(PREFIX)/plugins
 	# Move includes to match what VLC expects
 	mkdir -p $(PREFIX)/include/QtGui/qpa
 	cp $(PREFIX)/include/QtGui/$(QT_VERSION)/QtGui/qpa/qplatformnativeinterface.h $(PREFIX)/include/QtGui/qpa
 	# Clean Qt mess
 	rm -rf $(PREFIX)/lib/libQt5Bootstrap* $</lib/libQt5Bootstrap*
 	# Fix .pc files to remove debug version (d)
-	cd $(PREFIX)/lib/pkgconfig; for i in Qt5Core.pc Qt5Gui.pc Qt5Widgets.pc; do sed -i -e 's/d\.a/.a/g' -e 's/d $$/ /' $$i; done
-	# Fix Qt5Gui.pc file to include qwindows (QWindowsIntegrationPlugin) and Qt5Platform Support
-	cd $(PREFIX)/lib/pkgconfig; sed -i -e 's/ -lQt5Gui/ -lqwindows -lQt5PlatformSupport -lQt5Gui/g' Qt5Gui.pc
+	cd $(PREFIX)/lib/pkgconfig; for i in Qt5Core.pc Qt5Gui.pc Qt5Widgets.pc Qt5Test.pc Qt5Network.pc; do sed -i.orig -e 's/d\.a/.a/g' -e 's/d $$/ /' $$i; done
+	# Fix Qt5Gui.pc file to include qwindows (QWindowsIntegrationPlugin) and platform support libraries
+	cd $(PREFIX)/lib/pkgconfig; sed -i.orig -e 's/ -lQt5Gui/ -lqwindows -lqjpeg -luxtheme -ldwmapi -lQt5ThemeSupport -lQt5FontDatabaseSupport -lQt5EventDispatcherSupport -lQt5WindowsUIAutomationSupport -lqtfreetype -lQt5Gui/g' Qt5Gui.pc
+	# Fix Qt5Widget.pc file to include qwindowsvistastyle before Qt5Widget, as it depends on it
+	cd $(PREFIX)/lib/pkgconfig; sed -i.orig -e 's/ -lQt5Widget/ -lqwindowsvistastyle -lQt5Widget/' Qt5Widgets.pc
+endif
 ifdef HAVE_CROSS_COMPILE
 	# Building Qt build tools for Xcompilation
-	cd $</include/QtCore; ln -sf $(QT_VERSION)/QtCore/private
-	cd $</qmake; $(MAKE)
-	cd $<; $(MAKE) install_qmake install_mkspecs
+	cd $</include/QtCore; $(LN_S)f $(QT_VERSION)/QtCore/private private
+	cd $<; $(MAKE) -C qmake
+	cd $<; $(MAKE) sub-qmake-qmake-aux-pro-install_subtargets install_mkspecs
 	cd $</src/tools; \
 	for i in bootstrap uic rcc moc; \
-		do (cd $$i; echo $$i && ../../../bin/qmake -spec $(QT_SPEC) && $(MAKE) clean && $(MAKE) CC=$(HOST)-gcc CXX=$(HOST)-g++ LINKER=$(HOST)-g++ LIB="$(HOST)-ar -rc" && $(MAKE) install); \
+		do (cd $$i; echo $$i && ../../../bin/qmake -spec $(QT_SPEC) QMAKE_RC=$(HOST)-windres && $(MAKE) clean && $(MAKE) CC=$(HOST)-gcc CXX=$(HOST)-g++ LINKER=$(HOST)-g++ LIB="$(HOST)-ar -rc" && $(MAKE) install); \
 	done
 endif
 	touch $@

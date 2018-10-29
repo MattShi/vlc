@@ -69,13 +69,7 @@ static block_t *      Reassemble( decoder_t *, block_t * );
 static int            Decode    ( decoder_t *, block_t * );
 static block_t *      Packetize ( decoder_t *, block_t ** );
 
-/*****************************************************************************
- * DecoderOpen
- *****************************************************************************
- * Tries to launch a decoder and return score so that the interface is able
- * to chose.
- *****************************************************************************/
-static int DecoderOpen( vlc_object_t *p_this )
+static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
 {
     decoder_t     *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -84,41 +78,38 @@ static int DecoderOpen( vlc_object_t *p_this )
         return VLC_EGENERIC;
 
     p_dec->p_sys = p_sys = malloc( sizeof( decoder_sys_t ) );
+    if( !p_sys )
+        return VLC_ENOMEM;
 
-    p_sys->b_packetizer = false;
+    p_sys->b_packetizer = b_packetizer;
     p_sys->b_disabletrans = var_InheritBool( p_dec, "dvdsub-transparency" );
     p_sys->i_spu_size = 0;
     p_sys->i_spu      = 0;
     p_sys->p_block    = NULL;
 
-    p_dec->fmt_out.i_codec = VLC_CODEC_SPU;
-
-    p_dec->pf_decode    = Decode;
-    p_dec->pf_packetize = NULL;
+    if( b_packetizer )
+    {
+        p_dec->pf_packetize  = Packetize;
+        es_format_Copy( &p_dec->fmt_out, &p_dec->fmt_in );
+        p_dec->fmt_out.i_codec = VLC_CODEC_SPU;
+    }
+    else
+    {
+        p_dec->fmt_out.i_codec = VLC_CODEC_SPU;
+        p_dec->pf_decode    = Decode;
+    }
 
     return VLC_SUCCESS;
 }
 
-/*****************************************************************************
- * PacketizerOpen
- *****************************************************************************
- * Tries to launch a decoder and return score so that the interface is able
- * to chose.
- *****************************************************************************/
+static int DecoderOpen( vlc_object_t *p_this )
+{
+    return OpenCommon( p_this, false );
+}
+
 static int PacketizerOpen( vlc_object_t *p_this )
 {
-    decoder_t *p_dec = (decoder_t*)p_this;
-
-    if( DecoderOpen( p_this ) )
-    {
-        return VLC_EGENERIC;
-    }
-    p_dec->pf_packetize  = Packetize;
-    p_dec->p_sys->b_packetizer = true;
-    es_format_Copy( &p_dec->fmt_out, &p_dec->fmt_in );
-    p_dec->fmt_out.i_codec = VLC_CODEC_SPU;
-
-    return VLC_SUCCESS;
+    return OpenCommon( p_this, true );
 }
 
 /*****************************************************************************
@@ -194,7 +185,7 @@ static block_t *Packetize( decoder_t *p_dec, block_t **pp_block )
     }
 
     p_spu->i_dts = p_spu->i_pts;
-    p_spu->i_length = 0;
+    p_spu->i_length = VLC_TICK_INVALID;
 
     /* reinit context */
     p_sys->i_spu_size = 0;
@@ -219,7 +210,7 @@ static block_t *Reassemble( decoder_t *p_dec, block_t *p_block )
     }
 
     if( p_sys->i_spu_size <= 0 &&
-        ( p_block->i_pts <= VLC_TS_INVALID || p_block->i_buffer < 4 ) )
+        ( p_block->i_pts == VLC_TICK_INVALID || p_block->i_buffer < 4 ) )
     {
         msg_Dbg( p_dec, "invalid starting packet (size < 4 or pts <=0)" );
         msg_Dbg( p_dec, "spu size: %d, i_pts: %"PRId64" i_buffer: %zu",

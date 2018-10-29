@@ -34,9 +34,10 @@
 #include <vlc_codec.h>
 #include <vlc_picture.h>
 
-struct picture_sys_t {
+typedef struct
+{
     void *dummy;
-};
+} picture_sys_t;
 #include "va_surface_internal.h"
 
 #include "avcodec.h"
@@ -72,8 +73,11 @@ int va_pool_SetupDecoder(vlc_va_t *va, va_pool_t *va_pool, const AVCodecContext 
                   surface_width, surface_height,
                   avctx->coded_width, avctx->coded_height);
 
-    if (va_pool->surface_width == surface_width && va_pool->surface_height == surface_height)
+    if ( va_pool->surface_count >= count &&
+         va_pool->surface_width == surface_width &&
+         va_pool->surface_height == surface_height )
     {
+        msg_Dbg(va, "reusing surface pool");
         err = VLC_SUCCESS;
         goto done;
     }
@@ -95,12 +99,12 @@ int va_pool_SetupDecoder(vlc_va_t *va, va_pool_t *va_pool, const AVCodecContext 
     fmt.i_frame_rate      = avctx->framerate.num;
     fmt.i_frame_rate_base = avctx->framerate.den;
 
-    if (va_pool->pf_create_decoder_surfaces(va, avctx->codec_id, &fmt, count))
-        return VLC_EGENERIC;
-
-    va_pool->surface_width  = surface_width;
-    va_pool->surface_height = surface_height;
-    err = VLC_SUCCESS;
+    err = va_pool->pf_create_decoder_surfaces(va, avctx->codec_id, &fmt, count);
+    if (err == VLC_SUCCESS)
+    {
+        va_pool->surface_width  = surface_width;
+        va_pool->surface_height = surface_height;
+    }
 
 done:
     va_pool->surface_count = i;
@@ -157,7 +161,7 @@ static picture_context_t *GetSurface(va_pool_t *va_pool)
 
 int va_pool_Get(va_pool_t *va_pool, picture_t *pic)
 {
-    unsigned tries = (CLOCK_FREQ + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
+    unsigned tries = (VLC_TICK_FROM_SEC(1) + VOUT_OUTMEM_SLEEP) / VOUT_OUTMEM_SLEEP;
     picture_context_t *field;
 
     if (va_pool->surface_count == 0)
@@ -169,7 +173,7 @@ int va_pool_Get(va_pool_t *va_pool, picture_t *pic)
             return VLC_ENOITEM;
         /* Pool empty. Wait for some time as in src/input/decoder.c.
          * XXX: Both this and the core should use a semaphore or a CV. */
-        msleep(VOUT_OUTMEM_SLEEP);
+        vlc_tick_sleep(VOUT_OUTMEM_SLEEP);
     }
     pic->context = field;
     return VLC_SUCCESS;

@@ -28,6 +28,9 @@
 # include "config.h"
 #endif
 #include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include <vlc_common.h>
 #include <vlc_vout_window.h>
@@ -62,14 +65,10 @@ vout_window_t *vout_window_New(vlc_object_t *obj, const char *module,
     window->info.has_double_click = false;
     window->control = NULL;
     window->sys = NULL;
+    assert(owner != NULL);
+    window->owner = *owner;
 
-    if (owner != NULL)
-        window->owner = *owner;
-    else
-        window->owner.resized = NULL;
-
-    w->module = vlc_module_load(window, "vout window", module,
-                                module && *module,
+    w->module = vlc_module_load(window, "vout window", module, false,
                                 vout_window_start, window, cfg);
     if (!w->module) {
         vlc_object_release(window);
@@ -127,45 +126,235 @@ void vout_window_SetInhibition(vout_window_t *window, bool enabled)
 #include <vlc_vout.h>
 #include <vlc_vout_display.h>
 #include "window.h"
-#include "event.h"
+#include "vout_internal.h"
+
+#define DOUBLE_CLICK_TIME VLC_TICK_FROM_MS(300)
+
+static void vout_display_window_GetSize(vlc_object_t *obj,
+                                        const video_format_t *restrict source,
+                                        unsigned *restrict width,
+                                        unsigned *restrict height)
+{
+    *width = var_InheritInteger(obj, "width");
+    *height = var_InheritInteger(obj, "height");
+
+    /* If both width and height are forced, keep them as is. */
+    if (*width != (unsigned)-1 && *height != (unsigned)-1)
+        return;
+
+    /* Compute intended video resolution from source. */
+    unsigned w = source->i_visible_width;
+    unsigned h = source->i_visible_height;
+
+    assert(source->i_sar_num > 0 && source->i_sar_den > 0);
+    w = (w * source->i_sar_num) / source->i_sar_den;
+
+    char *crop = var_InheritString(obj, "crop");
+    if (crop != NULL)
+    {
+        unsigned num, den, cw, ch, top, bottom, left, right;
+
+        if (sscanf(crop, "%u:%u", &num, &den) == 2 && num > 0 && den > 0) {
+            if (w * den > h * num)
+                w = h * num / den;
+            else
+                h = w * den / num;
+        } else
+        if (sscanf(crop, "%ux%u+%*u+%u", &cw, &ch, &(unsigned){ 0 }) == 3) {
+            w = cw;
+            h = ch;
+        } else
+        if (sscanf(crop, "%u+%u+%u+%u", &left, &top, &right, &bottom) == 4
+         && right > left && bottom > top) {
+            w = right - left;
+            h = bottom - top;
+        } else
+            msg_Warn(obj, "Unknown crop format (%s)", crop);
+        free(crop);
+    }
+
+    char *aspect = crop ? NULL : var_InheritString(obj, "aspect-ratio");
+    if (aspect != NULL) {
+        unsigned num, den;
+
+        if (sscanf(aspect, "%u:%u", &num, &den) == 2 && num > 0 && den > 0)
+            w = h * num / den;
+        else
+            msg_Warn(obj, "Unknown aspect format (%s)", aspect);
+        free(aspect);
+    }
+
+    /* Adjust video size for orientation and pixel A/R. */
+    if (ORIENT_IS_SWAP(source->orientation)) {
+        unsigned x = w;
+
+        w = h;
+        h = x;
+    }
+
+    unsigned par_num, par_den;
+    if (var_InheritURational(obj, &par_num, &par_den, "monitor-par") == 0
+     && par_num > 0 && par_den > 0)
+        w = (w * par_den) / par_num;
+
+    /* If width is forced, adjust height according to the aspect ratio */
+    if (*width != (unsigned)-1) {
+        *height = (*width * h) / w;
+        return;
+    }
+
+    /* If height is forced, adjust width according to the aspect ratio */
+    if (*height != (unsigned)-1) {
+        *width = (*height * w) / h;
+        return;
+    }
+
+    /* If neither width nor height are forced, use the requested zoom. */
+    float zoom = var_InheritFloat(obj, "zoom");
+
+    if (isnan(zoom))
+        zoom = 1.f;
+    else
+        zoom = fabsf(zoom);
+
+    if (zoom < 0.1f)
+        zoom = 0.1f;
+    if (zoom > 10.f)
+        zoom = 10.f;
+
+    *width = lroundf(zoom * (float)w);
+    *height = lroundf(zoom * (float)h);
+}
 
 typedef struct vout_display_window
 {
-    vout_display_t *vd;
-    unsigned width;
-    unsigned height;
-
-    vlc_mutex_t lock;
+    vlc_mouse_t mouse;
+    vlc_tick_t last_left_press;
 } vout_display_window_t;
 
 static void vout_display_window_ResizeNotify(vout_window_t *window,
                                              unsigned width, unsigned height)
 {
-    vout_display_window_t *state = window->owner.sys;
+    vout_thread_t *vout = (vout_thread_t *)window->obj.parent;
 
     msg_Dbg(window, "resized to %ux%u", width, height);
-    vlc_mutex_lock(&state->lock);
-    state->width = width;
-    state->height = height;
-
-    if (state->vd != NULL)
-        vout_display_SendEventDisplaySize(state->vd, width, height);
-    vlc_mutex_unlock(&state->lock);
+    vout_ControlChangeDisplaySize(vout, width, height);
 }
 
 static void vout_display_window_CloseNotify(vout_window_t *window)
 {
-    vout_thread_t *vout = (vout_thread_t *)window->obj.parent;
+    /* TODO: Nowhere to dispatch to currently.
+     * Needs callback to ES output to deselect ES? */
+    msg_Err(window, "window closed");
+}
 
-    vout_SendEventClose(vout);
+static void vout_display_window_StateNotify(vout_window_t *window,
+                                            unsigned state)
+{
+    static const char states[][8] = {
+        [VOUT_WINDOW_STATE_NORMAL] = "normal",
+        [VOUT_WINDOW_STATE_ABOVE] = "above",
+        [VOUT_WINDOW_STATE_BELOW] = "below",
+    };
+
+    assert(state < ARRAY_SIZE(states));
+    msg_Dbg(window, "window state changed: %s", states[state]);
+    var_SetInteger(window->obj.parent, "window-state", state);
+}
+
+static void vout_display_window_FullscreenNotify(vout_window_t *window,
+                                                 const char *id)
+{
+    msg_Dbg(window, (id != NULL) ? "window set to fullscreen on %s"
+                                 : "window set to fullscreen", id);
+    var_SetString(window->obj.parent, "window-fullscreen-output",
+                  (id != NULL) ? id : "");
+    var_SetBool(window->obj.parent, "window-fullscreen", true);
+}
+
+static void vout_display_window_WindowingNotify(vout_window_t *window)
+{
+    msg_Dbg(window, "window set windowed");
+    var_SetBool(window->obj.parent, "window-fullscreen", false);
 }
 
 static void vout_display_window_MouseEvent(vout_window_t *window,
-                                           const vout_window_mouse_event_t *mouse)
+                                           const vout_window_mouse_event_t *ev)
 {
+    vout_display_window_t *state = window->owner.sys;
     vout_thread_t *vout = (vout_thread_t *)window->obj.parent;
-    vout_WindowMouseEvent(vout, mouse);
+    vlc_mouse_t *m = &state->mouse;
+
+    m->b_double_click = false;
+
+    switch (ev->type)
+    {
+        case VOUT_WINDOW_MOUSE_MOVED:
+            vlc_mouse_SetPosition(m, ev->x, ev->y);
+            state->last_left_press = INT64_MIN;
+            break;
+
+        case VOUT_WINDOW_MOUSE_PRESSED:
+            if (!window->info.has_double_click
+             && ev->button_mask == MOUSE_BUTTON_LEFT
+             && !vlc_mouse_IsLeftPressed(m))
+            {
+                const vlc_tick_t now = vlc_tick_now();
+
+                if (state->last_left_press != INT64_MIN
+                 && now - state->last_left_press < DOUBLE_CLICK_TIME)
+                {
+                    m->b_double_click = true;
+                    state->last_left_press = INT64_MIN;
+                }
+                else
+                    state->last_left_press = now;
+            }
+
+            vlc_mouse_SetPressed(m, ev->button_mask);
+            break;
+
+        case VOUT_WINDOW_MOUSE_RELEASED:
+            vlc_mouse_SetReleased(m, ev->button_mask);
+            break;
+
+        case VOUT_WINDOW_MOUSE_DOUBLE_CLICK:
+            assert(window->info.has_double_click);
+            m->b_double_click = true;
+            break;
+
+        default:
+            vlc_assert_unreachable();
+    }
+
+    vout_MouseState(vout, m);
 }
+
+static void vout_display_window_KeyboardEvent(vout_window_t *window,
+                                              unsigned key)
+{
+    var_SetInteger(window->obj.libvlc, "key-pressed", key);
+}
+
+static void vout_display_window_OutputEvent(vout_window_t *window,
+                                            const char *name, const char *desc)
+{
+    if (desc != NULL)
+        msg_Dbg(window, "fullscreen output %s (%s) added", name, desc);
+    else
+        msg_Dbg(window, "fullscreen output %s removed", name);
+}
+
+static const struct vout_window_callbacks vout_display_window_cbs = {
+    .resized = vout_display_window_ResizeNotify,
+    .closed = vout_display_window_CloseNotify,
+    .state_changed = vout_display_window_StateNotify,
+    .fullscreened = vout_display_window_FullscreenNotify,
+    .windowed = vout_display_window_WindowingNotify,
+    .mouse_event = vout_display_window_MouseEvent,
+    .keyboard_event = vout_display_window_KeyboardEvent,
+    .output_event = vout_display_window_OutputEvent,
+};
 
 /**
  * Creates a video window, initially without any attached display.
@@ -177,58 +366,37 @@ vout_window_t *vout_display_window_New(vout_thread_t *vout,
     if (state == NULL)
         return NULL;
 
-    state->vd = NULL;
-    state->width = cfg->width;
-    state->height = cfg->height;
-    vlc_mutex_init(&state->lock);
+    vlc_mouse_Init(&state->mouse);
+    state->last_left_press = INT64_MIN;
 
     char *modlist = var_InheritString(vout, "window");
     vout_window_owner_t owner = {
+        .cbs = &vout_display_window_cbs,
         .sys = state,
-        .resized = vout_display_window_ResizeNotify,
-        .closed = vout_display_window_CloseNotify,
-        .mouse_event = vout_display_window_MouseEvent,
     };
     vout_window_t *window;
 
+    var_Create(vout, "window-state", VLC_VAR_INTEGER);
+    var_Create(vout, "window-fullscreen", VLC_VAR_BOOL);
+    var_Create(vout, "window-fullscreen-output", VLC_VAR_STRING);
+
     window = vout_window_New((vlc_object_t *)vout, modlist, cfg, &owner);
     free(modlist);
-    if (window == NULL) {
-        vlc_mutex_destroy(&state->lock);
+    if (window == NULL)
         free(state);
-    }
     return window;
 }
 
-/**
- * Attaches a window to a display. Window events will be dispatched to the
- * display until they are detached.
- */
-void vout_display_window_Attach(vout_window_t *window, vout_display_t *vd)
+void vout_display_window_UpdateSize(vout_window_t *window,
+                                    const video_format_t *restrict fmt)
 {
-    vout_display_window_t *state = window->owner.sys;
+    unsigned width, height;
 
-    vout_window_SetSize(window,
-                        vd->cfg->display.width, vd->cfg->display.height);
-
-    vlc_mutex_lock(&state->lock);
-    state->vd = vd;
-
-    vout_display_SendEventDisplaySize(vd, state->width, state->height);
-    vlc_mutex_unlock(&state->lock);
-}
-
-/**
- * Detaches a window from a display. Window events will no longer be dispatched
- * (except those that do not need a display).
- */
-void vout_display_window_Detach(vout_window_t *window)
-{
-    vout_display_window_t *state = window->owner.sys;
-
-    vlc_mutex_lock(&state->lock);
-    state->vd = NULL;
-    vlc_mutex_unlock(&state->lock);
+    vout_display_window_GetSize(VLC_OBJECT(window), fmt, &width, &height);
+    if (width > 0 && height > 0) {
+        msg_Dbg(window, "requested size: %ux%u", width, height);
+        vout_window_SetSize(window, width, height);
+    }
 }
 
 /**
@@ -237,11 +405,12 @@ void vout_display_window_Detach(vout_window_t *window)
  */
 void vout_display_window_Delete(vout_window_t *window)
 {
+    vout_thread_t *vout = (vout_thread_t *)(window->obj.parent);
     vout_display_window_t *state = window->owner.sys;
 
     vout_window_Delete(window);
-
-    assert(state->vd == NULL);
-    vlc_mutex_destroy(&state->lock);
+    var_Destroy(vout, "window-fullscreen-output");
+    var_Destroy(vout, "window-fullscreen");
+    var_Destroy(vout, "window-state");
     free(state);
 }

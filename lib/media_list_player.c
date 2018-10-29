@@ -74,12 +74,6 @@ struct libvlc_media_list_player_t
     vlc_thread_t                thread;
 };
 
-/* This is not yet exported by libvlccore */
-static inline void vlc_assert_locked(vlc_mutex_t *mutex)
-{
-    VLC_UNUSED(mutex);
-}
-
 /*
  * Forward declaration
  */
@@ -113,7 +107,8 @@ static inline void unlock(libvlc_media_list_player_t * p_mlp)
 
 static inline void assert_locked(libvlc_media_list_player_t * p_mlp)
 {
-    vlc_assert_locked(&p_mlp->mp_callback_lock);
+    vlc_mutex_assert(&p_mlp->mp_callback_lock);
+    (void) p_mlp;
 }
 
 static inline libvlc_event_manager_t * mlist_em(libvlc_media_list_player_t * p_mlp)
@@ -159,8 +154,10 @@ get_next_path(libvlc_media_list_player_t * p_mlp, bool b_loop)
     /* If item just gained a sublist just play it */
     if (p_sublist_of_playing_item)
     {
+        int i_count = libvlc_media_list_count(p_sublist_of_playing_item);
         libvlc_media_list_release(p_sublist_of_playing_item);
-        return libvlc_media_list_path_copy_by_appending(p_mlp->current_playing_item_path, 0);
+        if (i_count > 0)
+            return libvlc_media_list_path_copy_by_appending(p_mlp->current_playing_item_path, 0);
     }
 
     /* Try to catch parent element */

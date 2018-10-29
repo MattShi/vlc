@@ -125,6 +125,12 @@ typedef struct
 #define VLC_STATIC_COND { NULLHANDLE, 0, NULLHANDLE, 0 }
 #define LIBVLC_NEED_SEMAPHORE
 #define LIBVLC_NEED_RWLOCK
+typedef struct
+{
+    unsigned done;
+    vlc_mutex_t mutex;
+} vlc_once_t;
+#define VLC_STATIC_ONCE { 0, VLC_STATIC_MUTEX }
 typedef struct vlc_threadvar *vlc_threadvar_t;
 typedef struct vlc_timer *vlc_timer_t;
 
@@ -212,7 +218,6 @@ static inline int vlc_poll (struct pollfd *fds, unsigned nfds, int timeout)
 /* Unnamed POSIX semaphores not supported on Mac OS X */
 # include <mach/semaphore.h>
 # include <mach/task.h>
-# define LIBVLC_USE_PTHREAD           1
 # define LIBVLC_USE_PTHREAD_CLEANUP   1
 
 typedef pthread_t       vlc_thread_t;
@@ -434,6 +439,28 @@ VLC_API int vlc_mutex_trylock( vlc_mutex_t * ) VLC_USED;
 VLC_API void vlc_mutex_unlock(vlc_mutex_t *);
 
 /**
+ * Checks if a mutex is locked.
+ *
+ * Do not use this function directly. Use vlc_mutex_assert() instead.
+ *
+ * @note
+ * This function has no effects.
+ * It is only meant to be use in run-time assertions.
+ *
+ * @retval false in debug builds of LibVLC,
+ *               if the mutex is not locked by the calling thread;
+ * @retval true in debug builds of LibVLC,
+ *              if the mutex is locked by the calling thread;
+ * @retval true in release builds of LibVLC.
+ */
+VLC_API bool vlc_mutex_marked(const vlc_mutex_t *) VLC_USED;
+
+/**
+ * Asserts that a mutex is locked by the calling thread.
+ */
+#define vlc_mutex_assert(m) assert(vlc_mutex_marked(m))
+
+/**
  * Initializes a condition variable.
  */
 VLC_API void vlc_cond_init(vlc_cond_t *);
@@ -515,7 +542,7 @@ VLC_API void vlc_cond_wait(vlc_cond_t *cond, vlc_mutex_t *mutex);
  *
  * This works like vlc_cond_wait() but with an additional time-out.
  * The time-out is expressed as an absolute timestamp using the same arbitrary
- * time reference as the mdate() and mwait() functions.
+ * time reference as the vlc_tick_now() and vlc_tick_wait() functions.
  *
  * \note This function is a cancellation point. In case of thread cancellation,
  * the mutex is always locked before cancellation proceeds.
@@ -528,12 +555,12 @@ VLC_API void vlc_cond_wait(vlc_cond_t *cond, vlc_mutex_t *mutex);
  * \warning If the variable was initialized with vlc_cond_init_daytime(), or
  * was statically initialized with \ref VLC_STATIC_COND, the time reference
  * used by this function is unspecified (depending on the implementation, it
- * might be the Unix epoch or the mdate() clock).
+ * might be the Unix epoch or the vlc_tick_now() clock).
  *
  * \return 0 if the condition was signaled, an error code in case of timeout.
  */
 VLC_API int vlc_cond_timedwait(vlc_cond_t *cond, vlc_mutex_t *mutex,
-                               mtime_t deadline);
+                               vlc_tick_t deadline);
 
 int vlc_cond_timedwait_daytime(vlc_cond_t *, vlc_mutex_t *, time_t);
 
@@ -684,7 +711,7 @@ void vlc_addr_wait(void *addr, unsigned val);
  * \return true if the function was woken up before the time-out,
  * false if the time-out elapsed.
  */
-bool vlc_addr_timedwait(void *addr, unsigned val, mtime_t delay);
+bool vlc_addr_timedwait(void *addr, unsigned val, vlc_tick_t delay);
 
 /**
  * Wakes up one thread on an address.
@@ -826,8 +853,8 @@ VLC_API unsigned long vlc_thread_id(void) VLC_USED;
  * Precision monotonic clock.
  *
  * In principles, the clock has a precision of 1 MHz. But the actual resolution
- * may be much lower, especially when it comes to sleeping with mwait() or
- * msleep(). Most general-purpose operating systems provide a resolution of
+ * may be much lower, especially when it comes to sleeping with vlc_tick_wait() or
+ * vlc_tick_sleep(). Most general-purpose operating systems provide a resolution of
  * only 100 to 1000 Hz.
  *
  * \warning The origin date (time value "zero") is not specified. It is
@@ -836,17 +863,17 @@ VLC_API unsigned long vlc_thread_id(void) VLC_USED;
  *
  * \return a timestamp in microseconds.
  */
-VLC_API mtime_t mdate(void);
+VLC_API vlc_tick_t vlc_tick_now(void);
 
 /**
  * Waits until a deadline.
  *
- * \param deadline timestamp to wait for (\ref mdate())
+ * \param deadline timestamp to wait for (\ref vlc_tick_now())
  *
  * \note The deadline may be exceeded due to OS scheduling.
  * \note This function is a cancellation point.
  */
-VLC_API void mwait(mtime_t deadline);
+VLC_API void vlc_tick_wait(vlc_tick_t deadline);
 
 /**
  * Waits for an interval of time.
@@ -856,10 +883,10 @@ VLC_API void mwait(mtime_t deadline);
  * \note The delay may be exceeded due to OS scheduling.
  * \note This function is a cancellation point.
  */
-VLC_API void msleep(mtime_t delay);
+VLC_API void vlc_tick_sleep(vlc_tick_t delay);
 
-#define VLC_HARD_MIN_SLEEP   10000 /* 10 milliseconds = 1 tick at 100Hz */
-#define VLC_SOFT_MIN_SLEEP 9000000 /* 9 seconds */
+#define VLC_HARD_MIN_SLEEP  VLC_TICK_FROM_MS(10)   /* 10 milliseconds = 1 tick at 100Hz */
+#define VLC_SOFT_MIN_SLEEP  VLC_TICK_FROM_SEC(9)   /* 9 seconds */
 
 #if defined (__GNUC__) && !defined (__clang__)
 /* Linux has 100, 250, 300 or 1000Hz
@@ -871,7 +898,7 @@ static
 __attribute__((unused))
 __attribute__((noinline))
 __attribute__((error("sorry, cannot sleep for such short a time")))
-mtime_t impossible_delay( mtime_t delay )
+vlc_tick_t impossible_delay( vlc_tick_t delay )
 {
     (void) delay;
     return VLC_HARD_MIN_SLEEP;
@@ -881,7 +908,7 @@ static
 __attribute__((unused))
 __attribute__((noinline))
 __attribute__((warning("use proper event handling instead of short delay")))
-mtime_t harmful_delay( mtime_t delay )
+vlc_tick_t harmful_delay( vlc_tick_t delay )
 {
     return delay;
 }
@@ -899,7 +926,7 @@ static
 __attribute__((unused))
 __attribute__((noinline))
 __attribute__((error("deadlines can not be constant")))
-mtime_t impossible_deadline( mtime_t deadline )
+vlc_tick_t impossible_deadline( vlc_tick_t deadline )
 {
     return deadline;
 }
@@ -911,8 +938,8 @@ mtime_t impossible_deadline( mtime_t deadline )
 # define check_deadline(d) (d)
 #endif
 
-#define msleep(d) msleep(check_delay(d))
-#define mwait(d) mwait(check_deadline(d))
+#define vlc_tick_sleep(d) vlc_tick_sleep(check_delay(d))
+#define vlc_tick_wait(d) vlc_tick_wait(check_deadline(d))
 
 /**
  * Initializes an asynchronous timer.
@@ -942,6 +969,9 @@ VLC_USED;
  */
 VLC_API void vlc_timer_destroy(vlc_timer_t timer);
 
+#define VLC_TIMER_DISARM    (0)
+#define VLC_TIMER_FIRE_ONCE (0)
+
 /**
  * Arms or disarms an initialized timer.
  *
@@ -953,7 +983,7 @@ VLC_API void vlc_timer_destroy(vlc_timer_t timer);
  * timer is still running. See also vlc_timer_getoverrun().
  *
  * \param timer initialized timer
- * \param absolute the timer value origin is the same as mdate() if true,
+ * \param absolute the timer value origin is the same as vlc_tick_now() if true,
  *                 the timer value is relative to now if false.
  * \param value zero to disarm the timer, otherwise the initial time to wait
  *              before firing the timer.
@@ -961,7 +991,17 @@ VLC_API void vlc_timer_destroy(vlc_timer_t timer);
  *                 repetition interval.
  */
 VLC_API void vlc_timer_schedule(vlc_timer_t timer, bool absolute,
-                                mtime_t value, mtime_t interval);
+                                vlc_tick_t value, vlc_tick_t interval);
+
+static inline void vlc_timer_disarm(vlc_timer_t timer)
+{
+    vlc_timer_schedule( timer, false, VLC_TIMER_DISARM, 0 );
+}
+
+static inline void vlc_timer_schedule_asap(vlc_timer_t timer, vlc_tick_t interval)
+{
+    vlc_timer_schedule(timer, false, 1, interval);
+}
 
 /**
  * Fetches and resets the overrun counter for a timer.
@@ -1080,6 +1120,7 @@ class vlc_mutex_locker
             vlc_mutex_unlock (lock);
         }
 };
+
 #endif
 
 enum
@@ -1088,7 +1129,6 @@ enum
    VLC_GCRYPT_MUTEX,
    VLC_XLIB_MUTEX,
    VLC_MOSAIC_MUTEX,
-   VLC_HIGHLIGHT_MUTEX,
 #ifdef _WIN32
    VLC_MTA_MUTEX,
 #endif

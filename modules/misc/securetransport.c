@@ -35,10 +35,53 @@
 #include <Security/SecureTransport.h>
 #include <TargetConditionals.h>
 
+#include <vlc_charset.h>
+
 /* From MacErrors.h (cannot be included because it isn't present in iOS: */
 #ifndef ioErr
 # define ioErr -36
 #endif
+
+/*****************************************************************************
+ * ALPN helper functions
+ *****************************************************************************/
+
+/* Converts the VLC ALPN C array (null-terminated) to a ALPN
+ * CFMutableArray as expected by the Secure Transport API
+ * Returns CFMutableArrayRef on success, else NULL.
+ */
+static CFMutableArrayRef alpnToCFArray(const char *const *alpn)
+{
+    CFMutableArrayRef alpnValues =
+            CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+
+    for (size_t i = 0; alpn[i] != NULL; i++) {
+        CFStringRef alpnVal =
+                CFStringCreateWithCString(kCFAllocatorDefault, alpn[i], kCFStringEncodingASCII);
+        if (alpnVal == NULL) {
+            // Failed to convert the ALPN value to CFString, error out.
+            CFRelease(alpnValues);
+            return NULL;
+        }
+        CFArrayAppendValue(alpnValues, alpnVal);
+        CFRelease(alpnVal);
+    }
+    return alpnValues;
+}
+
+/* Returns the first entry copy of the ALPN array as char*
+ * or NULL on failure.
+ */
+static char* CFArrayALPNCopyFirst(CFArrayRef alpnArray)
+{
+    CFIndex count = CFArrayGetCount(alpnArray);
+
+    if (count <= 0)
+        return NULL;
+
+    CFStringRef alpnVal = CFArrayGetValueAtIndex(alpnArray, 0);
+    return FromCFString(alpnVal, kCFStringEncodingASCII);
+}
 
 /*****************************************************************************
  * Module descriptor
@@ -96,6 +139,8 @@ typedef struct {
     bool b_blocking_send;
     bool b_handshaked;
     bool b_server_mode;
+
+    vlc_mutex_t lock;
 } vlc_tls_st_t;
 
 static int st_Error (vlc_tls_t *obj, int val)
@@ -138,7 +183,7 @@ static OSStatus st_SocketReadFunc (SSLConnectionRef connection,
     OSStatus retValue = noErr;
 
     while (iov.iov_len > 0) {
-        ssize_t val = sys->sock->readv(sys->sock, &iov, 1);
+        ssize_t val = sys->sock->ops->readv(sys->sock, &iov, 1);
         if (val <= 0) {
             if (val == 0) {
                 msg_Dbg(sys->obj, "found eof");
@@ -192,7 +237,7 @@ static OSStatus st_SocketWriteFunc (SSLConnectionRef connection,
     OSStatus retValue = noErr;
 
     while (iov.iov_len > 0) {
-        ssize_t val = sys->sock->writev(sys->sock, &iov, 1);
+        ssize_t val = sys->sock->ops->writev(sys->sock, &iov, 1);
         if (val < 0) {
             switch (errno) {
                 case EAGAIN:
@@ -391,9 +436,42 @@ static int st_Handshake (vlc_tls_creds_t *crd, vlc_tls_t *session,
     VLC_UNUSED(service);
 
     OSStatus retValue = SSLHandshake(sys->p_context);
+
+// Only try to use ALPN on recent enough SDKs
+// macOS 10.13.2, iOS 11, tvOS 11, watchOS 4
+#if (TARGET_OS_OSX    && MAC_OS_X_VERSION_MAX_ALLOWED     >= 101302) || \
+    (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED  >= 110000) || \
+    (TARGET_OS_TV     && __TV_OS_VERSION_MAX_ALLOWED      >= 110000) || \
+    (TARGET_OS_WATCH  && __WATCH_OS_VERSION_MAX_ALLOWED   >= 40000)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+
+    /* Handle ALPN data */
+    if (alp != NULL) {
+        if (SSLCopyALPNProtocols != NULL) {
+            CFArrayRef alpnArray = NULL;
+            OSStatus res = SSLCopyALPNProtocols(sys->p_context, &alpnArray);
+            if (res == noErr && alpnArray) {
+                *alp = CFArrayALPNCopyFirst(alpnArray);
+                if (unlikely(*alp == NULL))
+                    return -1;
+            } else {
+                *alp = NULL;
+            }
+        } else {
+            *alp = NULL;
+        }
+    }
+
+#pragma clang diagnostic pop
+#else
+
+    /* No ALPN support */
     if (alp != NULL) {
         *alp = NULL;
     }
+
+#endif
 
     if (retValue == errSSLWouldBlock) {
         msg_Dbg(crd, "handshake is blocked, try again later");
@@ -449,6 +527,8 @@ static ssize_t st_Send (vlc_tls_t *session, const struct iovec *iov,
     if (unlikely(count == 0))
         return 0;
 
+    vlc_mutex_lock(&sys->lock);
+
     /*
      * SSLWrite does not return the number of bytes actually written to
      * the socket, but the number of bytes written to the internal cache.
@@ -477,6 +557,7 @@ static ssize_t st_Send (vlc_tls_t *session, const struct iovec *iov,
             sys->i_send_buffered_bytes = 0;
 
         } else if (ret == errSSLWouldBlock) {
+            vlc_mutex_unlock(&sys->lock);
             errno = againErr;
             return -1;
         }
@@ -488,10 +569,12 @@ static ssize_t st_Send (vlc_tls_t *session, const struct iovec *iov,
         if (ret == errSSLWouldBlock) {
             sys->i_send_buffered_bytes = iov->iov_len;
             errno = againErr;
+            vlc_mutex_unlock(&sys->lock);
             return -1;
         }
     }
 
+    vlc_mutex_unlock(&sys->lock);
     return ret != noErr ? st_Error(session, ret) : actualSize;
 }
 
@@ -505,19 +588,25 @@ static ssize_t st_Recv (vlc_tls_t *session, struct iovec *iov, unsigned count)
     if (unlikely(count == 0))
         return 0;
 
+    vlc_mutex_lock(&sys->lock);
+
     size_t actualSize;
     OSStatus ret = SSLRead(sys->p_context, iov->iov_base, iov->iov_len,
                            &actualSize);
 
-    if (ret == errSSLWouldBlock && actualSize)
+    if (ret == errSSLWouldBlock && actualSize) {
+        vlc_mutex_unlock(&sys->lock);
         return actualSize;
+    }
 
     /* peer performed shutdown */
     if (ret == errSSLClosedNoNotify || ret == errSSLClosedGraceful) {
         msg_Dbg(sys->obj, "Got close notification with code %i", (int)ret);
+        vlc_mutex_unlock(&sys->lock);
         return 0;
     }
 
+    vlc_mutex_unlock(&sys->lock);
     return ret != noErr ? st_Error(session, ret) : actualSize;
 }
 
@@ -530,6 +619,8 @@ static int st_SessionShutdown (vlc_tls_t *session, bool duplex) {
     vlc_tls_st_t *sys = (vlc_tls_st_t *)session;
 
     msg_Dbg(sys->obj, "shutdown TLS session");
+
+    vlc_mutex_destroy(&sys->lock);
 
     OSStatus ret = noErr;
     VLC_UNUSED(duplex);
@@ -563,6 +654,15 @@ static void st_SessionClose (vlc_tls_t *session) {
     free(sys);
 }
 
+static const struct vlc_tls_operations st_ops =
+{
+    st_GetFD,
+    st_Recv,
+    st_Send,
+    st_SessionShutdown,
+    st_SessionClose,
+};
+
 /**
  * Initializes a client-side TLS session.
  */
@@ -581,15 +681,12 @@ static vlc_tls_t *st_SessionOpenCommon(vlc_tls_creds_t *crd, vlc_tls_t *sock,
     sys->p_context = NULL;
     sys->sock = sock;
     sys->b_server_mode = b_server;
+    vlc_mutex_init(&sys->lock);
     sys->obj = VLC_OBJECT(crd);
 
     vlc_tls_t *tls = &sys->tls;
 
-    tls->get_fd = st_GetFD;
-    tls->readv = st_Recv;
-    tls->writev = st_Send;
-    tls->shutdown = st_SessionShutdown;
-    tls->close = st_SessionClose;
+    tls->ops = &st_ops;
     crd->handshake = st_Handshake;
 
     SSLContextRef p_context = NULL;
@@ -630,11 +727,6 @@ error:
 static vlc_tls_t *st_ClientSessionOpen(vlc_tls_creds_t *crd, vlc_tls_t *sock,
                                  const char *hostname, const char *const *alpn)
 {
-    if (alpn != NULL) {
-        msg_Warn(crd, "Ignoring ALPN request due to lack of support in the backend. Proxy behavior potentially undefined.");
-#warning ALPN support missing, proxy behavior potentially undefined (rdar://29127318, #17721)
-    }
-
     msg_Dbg(crd, "open TLS session for %s", hostname);
 
     vlc_tls_t *tls = st_SessionOpenCommon(crd, sock, false);
@@ -648,6 +740,47 @@ static vlc_tls_t *st_ClientSessionOpen(vlc_tls_creds_t *crd, vlc_tls_t *sock,
         msg_Err(crd, "cannot set peer domain name");
         goto error;
     }
+
+// Only try to use ALPN on recent enough SDKs
+// macOS 10.13.2, iOS 11, tvOS 11, watchOS 4
+#if (TARGET_OS_OSX    && MAC_OS_X_VERSION_MAX_ALLOWED     >= 101302) || \
+    (TARGET_OS_IPHONE && __IPHONE_OS_VERSION_MAX_ALLOWED  >= 110000) || \
+    (TARGET_OS_TV     && __TV_OS_VERSION_MAX_ALLOWED      >= 110000) || \
+    (TARGET_OS_WATCH  && __WATCH_OS_VERSION_MAX_ALLOWED   >= 40000)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpartial-availability"
+
+    /* Handle ALPN */
+    if (alpn != NULL) {
+        if (SSLSetALPNProtocols != NULL) {
+            CFMutableArrayRef alpnValues = alpnToCFArray(alpn);
+
+            if (alpnValues == NULL) {
+                msg_Err(crd, "cannot create CFMutableArray for ALPN values");
+                goto error;
+            }
+
+            OSStatus ret = SSLSetALPNProtocols(sys->p_context, alpnValues);
+            if (ret != noErr){
+                msg_Err(crd, "failed setting ALPN protocols (%i)", ret);
+            }
+            CFRelease(alpnValues);
+        } else {
+            msg_Warn(crd, "Ignoring ALPN request due to lack of support in the backend. Proxy behavior potentially undefined.");
+        }
+    }
+
+#pragma clang diagnostic pop
+#else
+
+    /* No ALPN support */
+    if (alpn != NULL) {
+        // Fallback if SDK does not has SSLSetALPNProtocols
+        msg_Warn(crd, "Compiled in SDK without ALPN support. Proxy behavior potentially undefined.");
+        #warning ALPN support in your SDK version missing (need 10.13.2), proxy behavior potentially undefined (rdar://29127318, #17721)
+    }
+
+#endif
 
     /* disable automatic validation. We do so manually to also handle invalid
        certificates */

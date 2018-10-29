@@ -74,8 +74,8 @@ InputManager::InputManager( MainInputManager *mim, intf_thread_t *_p_intf) :
     f_rate       = 0.;
     p_item       = NULL;
     b_video      = false;
-    timeA        = 0;
-    timeB        = 0;
+    timeA        = VLC_TICK_INVALID;
+    timeB        = VLC_TICK_INVALID;
     f_cache      = -1.; /* impossible initial value, different from all */
     registerAndCheckEventIds( IMEvent::PositionUpdate, IMEvent::FullscreenControlPlanHide );
     registerAndCheckEventIds( PLEvent::PLItemAppended, PLEvent::PLEmpty );
@@ -119,13 +119,13 @@ void InputManager::setInput( input_thread_t *_p_input )
         {
             char *uri = input_item_GetURI( p_item );
 
-            int i_time = RecentsMRL::getInstance( p_intf )->time( qfu(uri) );
+            vlc_tick_t i_time = RecentsMRL::getInstance( p_intf )->time( qfu(uri) );
             if( i_time > 0 && qfu( uri ) != lastURI &&
                     !var_GetFloat( p_input, "run-time" ) &&
                     !var_GetFloat( p_input, "start-time" ) &&
                     !var_GetFloat( p_input, "stop-time" ) )
             {
-                emit resumePlayback( (int64_t)i_time * 1000 );
+                emit resumePlayback( i_time );
             }
             playlist_Lock( THEPL );
             // Add root items only
@@ -162,10 +162,10 @@ void InputManager::delInput()
     char *uri = input_item_GetURI( p_item );
     if( uri != NULL ) {
         float f_pos = var_GetFloat( p_input , "position" );
-        int64_t i_time = -1;
+        vlc_tick_t i_time = -1;
 
         if( f_pos >= 0.05f && f_pos <= 0.95f
-         && var_GetInteger( p_input, "length" ) >= 60 * CLOCK_FREQ )
+         && var_GetInteger( p_input, "length" ) >= VLC_TICK_FROM_SEC(60))
             i_time = var_GetInteger( p_input, "time");
 
         RecentsMRL::getInstance( p_intf )->setTime( qfu(uri), i_time );
@@ -178,8 +178,8 @@ void InputManager::delInput()
     oldName              = "";
     artUrl               = "";
     b_video              = false;
-    timeA                = 0;
-    timeB                = 0;
+    timeA                = VLC_TICK_INVALID;
+    timeB                = VLC_TICK_INVALID;
     f_rate               = 0. ;
 
     if( p_input_vbi )
@@ -230,6 +230,9 @@ void InputManager::customEvent( QEvent *event )
     /* Actions */
     switch( i_type )
     {
+    case IMEvent::CapabilitiesChanged:
+        UpdateCapabilities();
+        break;
     case IMEvent::PositionUpdate:
         UpdatePosition();
         break;
@@ -267,10 +270,6 @@ void InputManager::customEvent( QEvent *event )
         break;
     case IMEvent::ItemEsChanged:
         UpdateTeletext();
-        // We don't do anything ES related. Why ?
-        break;
-    case IMEvent::ItemTeletextChanged:
-        UpdateTeletext();
         break;
     case IMEvent::InterfaceVoutUpdate:
         UpdateVout();
@@ -283,9 +282,6 @@ void InputManager::customEvent( QEvent *event )
         break;
     case IMEvent::BookmarksChanged:
         emit bookmarksChanged();
-        break;
-    case IMEvent::InterfaceAoutUpdate:
-        UpdateAout();
         break;
     case IMEvent::RecordingEvent:
         UpdateRecord();
@@ -340,6 +336,9 @@ static int InputEvent( vlc_object_t *, const char *,
     case INPUT_EVENT_RATE:
         event = new IMEvent( IMEvent::ItemRateChanged );
         break;
+    case INPUT_EVENT_CAPABILITIES:
+        event = new IMEvent( IMEvent::CapabilitiesChanged );
+        break;
     case INPUT_EVENT_POSITION:
     //case INPUT_EVENT_LENGTH:
         event = new IMEvent( IMEvent::PositionUpdate );
@@ -353,9 +352,6 @@ static int InputEvent( vlc_object_t *, const char *,
     case INPUT_EVENT_ES:
         event = new IMEvent( IMEvent::ItemEsChanged );
         break;
-    case INPUT_EVENT_TELETEXT:
-        event = new IMEvent( IMEvent::ItemTeletextChanged );
-        break;
 
     case INPUT_EVENT_STATISTICS:
         event = new IMEvent( IMEvent::StatisticsUpdate );
@@ -363,9 +359,6 @@ static int InputEvent( vlc_object_t *, const char *,
 
     case INPUT_EVENT_VOUT:
         event = new IMEvent( IMEvent::InterfaceVoutUpdate );
-        break;
-    case INPUT_EVENT_AOUT:
-        event = new IMEvent( IMEvent::InterfaceAoutUpdate );
         break;
 
     case INPUT_EVENT_ITEM_META: /* Codec MetaData + Art */
@@ -420,7 +413,7 @@ static int VbiEvent( vlc_object_t *, const char *,
                      vlc_value_t, vlc_value_t, void *param )
 {
     InputManager *im = (InputManager*)param;
-    IMEvent *event = new IMEvent( IMEvent::ItemTeletextChanged );
+    IMEvent *event = new IMEvent( IMEvent::ItemEsChanged );
 
     QApplication::postEvent( im, event );
     return VLC_SUCCESS;
@@ -429,24 +422,23 @@ static int VbiEvent( vlc_object_t *, const char *,
 void InputManager::UpdatePosition()
 {
     /* Update position */
-    int64_t i_length = var_GetInteger(  p_input , "length" );
-    int64_t i_time = var_GetInteger(  p_input , "time");
+    vlc_tick_t i_length = var_GetInteger(  p_input , "length" );
+    vlc_tick_t i_time = var_GetInteger(  p_input , "time");
     float f_pos = var_GetFloat(  p_input , "position" );
-    emit positionUpdated( f_pos, i_time, i_length / CLOCK_FREQ );
+    emit positionUpdated( f_pos, i_time, SEC_FROM_VLC_TICK(i_length) );
 }
 
 void InputManager::UpdateNavigation()
 {
     /* Update navigation status */
-    vlc_value_t val; val.i_int = 0;
-    vlc_value_t val2; val2.i_int = 0;
+    size_t ntitles, nchapters;
 
-    var_Change( p_input, "title", VLC_VAR_CHOICESCOUNT, &val, NULL );
+    var_Change( p_input, "title", VLC_VAR_CHOICESCOUNT, &ntitles );
 
-    if( val.i_int > 0 )
+    if( ntitles > 0 )
     {
         bool b_menu = false;
-        if( val.i_int > 1 )
+        if( ntitles > 1 )
         {
             input_title_t **pp_title = NULL;
             int i_title = 0;
@@ -463,10 +455,10 @@ void InputManager::UpdateNavigation()
         }
 
         /* p_input != NULL since val.i_int != 0 */
-        var_Change( p_input, "chapter", VLC_VAR_CHOICESCOUNT, &val2, NULL );
+        var_Change( p_input, "chapter", VLC_VAR_CHOICESCOUNT, &nchapters );
 
         emit titleChanged( b_menu );
-        emit chapterChanged( val2.i_int > 1 );
+        emit chapterChanged( nchapters > 1 );
     }
     else
         emit chapterChanged( false );
@@ -475,6 +467,11 @@ void InputManager::UpdateNavigation()
         emit inputCanSeek( var_GetBool( p_input, "can-seek" ) );
     else
         emit inputCanSeek( false );
+}
+
+void InputManager::UpdateCapabilities()
+{
+    emit inputCanSeek( var_GetBool( p_input, "can-seek" ) );
 }
 
 void InputManager::UpdateStatus()
@@ -510,7 +507,7 @@ void InputManager::UpdateName()
     char *formatted = NULL;
     if (format != NULL)
     {
-        formatted = vlc_strfinput( p_input, format );
+        formatted = vlc_strfinput( p_input, NULL, format );
         free( format );
         if( formatted != NULL )
         {
@@ -552,9 +549,9 @@ bool InputManager::hasAudio()
 {
     if( hasInput() )
     {
-        vlc_value_t val;
-        var_Change( p_input, "audio-es", VLC_VAR_CHOICESCOUNT, &val, NULL );
-        return val.i_int > 0;
+        size_t val;
+        var_Change( p_input, "audio-es", VLC_VAR_CHOICESCOUNT, &val );
+        return val > 0;
     }
     return false;
 }
@@ -653,11 +650,6 @@ void InputManager::UpdateVout()
     free( pp_vout );
 }
 
-void InputManager::UpdateAout()
-{
-    /* TODO */
-}
-
 void InputManager::UpdateCaching()
 {
     float f_newCache = var_GetFloat ( p_input, "cache" );
@@ -689,7 +681,8 @@ void InputManager::requestArtUpdate( input_item_t *p_item, bool b_forced )
         }
         libvlc_ArtRequest( p_intf->obj.libvlc, p_item,
                            (b_forced) ? META_REQUEST_OPTION_SCOPE_ANY
-                                      : META_REQUEST_OPTION_NONE );
+                                      : META_REQUEST_OPTION_NONE,
+                           NULL, NULL );
         /* No input will signal the cover art to update,
              * let's do it ourself */
         if ( b_current_item )
@@ -860,26 +853,26 @@ void InputManager::telexSetTransparency( bool b_transparentTelextext )
 
 void InputManager::activateTeletext( bool b_enable )
 {
-    vlc_value_t list;
-    vlc_value_t text;
-    if( hasInput() && !var_Change( p_input, "teletext-es", VLC_VAR_GETCHOICES, &list, &text ) )
+    vlc_value_t *list;
+    char **text;
+    size_t count;
+
+    if( hasInput() && !var_Change( p_input, "teletext-es", VLC_VAR_GETCHOICES,
+                                   &count, &list, &text ) )
     {
-        if( list.p_list->i_count > 0 )
-        {
-            /* Prefer the page 100 if it is present */
-            int i;
-            for( i = 0; i < text.p_list->i_count; i++ )
-            {
-                /* The description is the page number as a string */
-                const char *psz_page = text.p_list->p_values[i].psz_string;
-                if( psz_page && !strcmp( psz_page, "100" ) )
-                    break;
+        if( count > 0 )
+        {   /* Prefer the page 100 if it is present */
+            int id = list[0].i_int;
+            for( size_t i = 0; i < count; i++ )
+            {   /* The description is the page number as a string */
+                if( text[i] != NULL && !strcmp( text[i], "100" ) )
+                    id = list[i].i_int;
+                free(text[i]);
             }
-            if( i >= list.p_list->i_count )
-                i = 0;
-            var_SetInteger( p_input, "spu-es", b_enable ? list.p_list->p_values[i].i_int : -1 );
+            var_SetInteger( p_input, "spu-es", b_enable ? id : -1 );
         }
-        var_FreeList( &list, &text );
+        free(text);
+        free(list);
     }
 }
 
@@ -928,7 +921,7 @@ void InputManager::jumpFwd()
     int i_interval = var_InheritInteger( p_input, "short-jump-size" );
     if( i_interval > 0 && hasInput() )
     {
-        mtime_t val = CLOCK_FREQ * i_interval;
+        vlc_tick_t val = vlc_tick_from_sec( i_interval );
         var_SetInteger( p_input, "time-offset", val );
     }
 }
@@ -938,38 +931,38 @@ void InputManager::jumpBwd()
     int i_interval = var_InheritInteger( p_input, "short-jump-size" );
     if( i_interval > 0 && hasInput() )
     {
-        mtime_t val = -CLOCK_FREQ * i_interval;
+        vlc_tick_t val = vlc_tick_from_sec( -i_interval );
         var_SetInteger( p_input, "time-offset", val );
     }
 }
 
 void InputManager::setAtoB()
 {
-    if( !timeA )
+    if( timeA != VLC_TICK_INVALID )
     {
         timeA = var_GetInteger( p_mim->getInput(), "time"  );
     }
-    else if( !timeB )
+    else if( timeB != VLC_TICK_INVALID )
     {
         timeB = var_GetInteger( p_mim->getInput(), "time"  );
         var_SetInteger( p_mim->getInput(), "time" , timeA );
-        CONNECT( this, positionUpdated( float, int64_t, int ),
-                 this, AtoBLoop( float, int64_t, int ) );
+        CONNECT( this, positionUpdated( float, vlc_tick_t, int ),
+                 this, AtoBLoop( float, vlc_tick_t, int ) );
     }
     else
     {
-        timeA = 0;
-        timeB = 0;
-        disconnect( this, SIGNAL( positionUpdated( float, int64_t, int ) ),
-                    this, SLOT( AtoBLoop( float, int64_t, int ) ) );
+        timeA = VLC_TICK_INVALID;
+        timeB = VLC_TICK_INVALID;
+        disconnect( this, SIGNAL( positionUpdated( float, vlc_tick_t, int ) ),
+                    this, SLOT( AtoBLoop( float, vlc_tick_t, int ) ) );
     }
-    emit AtoBchanged( (timeA != 0 ), (timeB != 0 ) );
+    emit AtoBchanged( (timeA != VLC_TICK_INVALID ), (timeB != VLC_TICK_INVALID ) );
 }
 
 /* Function called regularly when in an AtoB loop */
-void InputManager::AtoBLoop( float, int64_t i_time, int )
+void InputManager::AtoBLoop( float, vlc_tick_t i_time, int )
 {
-    if( timeB && i_time >= timeB )
+    if( timeB != VLC_TICK_INVALID && i_time >= timeB )
         var_SetInteger( p_mim->getInput(), "time" , timeA );
 }
 
@@ -1118,7 +1111,7 @@ void MainInputManager::prev()
 
 void MainInputManager::prevOrReset()
 {
-    if( !p_input || var_GetInteger( p_input, "time") < INT64_C(10000) )
+    if( !p_input || var_GetInteger( p_input, "time") < VLC_TICK_FROM_MS(10) )
         playlist_Prev( THEPL );
     else
         getIM()->sliderUpdate( 0.0 );
@@ -1141,7 +1134,7 @@ void MainInputManager::pause()
 
 void MainInputManager::toggleRandom()
 {
-    config_PutInt( p_intf, "random", var_ToggleBool( THEPL, "random" ) );
+    config_PutInt( "random", var_ToggleBool( THEPL, "random" ) );
 }
 
 void MainInputManager::notifyRandom(bool value)
@@ -1183,14 +1176,14 @@ void MainInputManager::loopRepeatLoopStatus()
 
     var_SetBool( THEPL, "loop", loop );
     var_SetBool( THEPL, "repeat", repeat );
-    config_PutInt( p_intf, "loop", loop );
-    config_PutInt( p_intf, "repeat", repeat );
+    config_PutInt( "loop", loop );
+    config_PutInt( "repeat", repeat );
 }
 
 void MainInputManager::activatePlayQuit( bool b_exit )
 {
     var_SetBool( THEPL, "play-and-exit", b_exit );
-    config_PutInt( p_intf, "play-and-exit", b_exit );
+    config_PutInt( "play-and-exit", b_exit );
 }
 
 bool MainInputManager::getPlayExitState()

@@ -6,6 +6,8 @@
 	<string>English</string>
 	<key>CFBundleAllowMixedLocalizations</key>
 	<true/>
+	<key>NSRequiresAquaSystemAppearance</key>
+	<false/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -353,6 +355,30 @@
 			<string>DTS Encoded Audio File</string>
 			<key>CFBundleTypeRole</key>
 			<string>Viewer</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>audio.icns</string>
+			<key>CFBundleTypeName</key>
+			<string>DSD Stream File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.sony.dsf</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeIconFile</key>
+			<string>audio.icns</string>
+			<key>CFBundleTypeName</key>
+			<string>DSD Interchange File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.philips.dsdiff</string>
+			</array>
 		</dict>
 		<dict>
 			<key>CFBundleTypeExtensions</key>
@@ -1503,7 +1529,7 @@
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.video</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>10.10.0</string>
+	<string>10.11.0</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
@@ -2370,6 +2396,48 @@
 				<array>
 					<string>application/x-rar</string>
 					<string>application/x-rar-compressed</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>DSD Interchange File</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.philips.dsdiff</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>dff</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/x-dff</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.audio</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>DSD Stream File</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.sony.dsf</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>dsf</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/x-dsf</string>
 				</array>
 			</dict>
 		</dict>

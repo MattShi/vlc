@@ -182,10 +182,8 @@ static int
 se_DirControl( stream_t* stream, int req, va_list args )
 {
     (void)stream;
+    (void)req;
     (void)args;
-
-    if( req == STREAM_IS_DIRECTORY )
-        return VLC_SUCCESS;
 
     return VLC_EGENERIC;
 }
@@ -267,16 +265,12 @@ se_AttachWrapper( struct stream_extractor_private* priv, stream_t* source )
     }
 
     priv->wrapper = s;
-    priv->wrapper->p_input = source->p_input;
+    priv->wrapper->p_input_item = source->p_input_item;
     priv->wrapper->p_sys = priv;
 
     priv->source = source;
 
-    if( priv->wrapper->pf_read )
-        priv->wrapper = stream_FilterChainNew( priv->wrapper, "cache_read" );
-    else if( priv->wrapper->pf_block )
-        priv->wrapper = stream_FilterChainNew( priv->wrapper, "cache_block" );
-
+    priv->wrapper = stream_FilterChainNew( priv->wrapper, "cache" );
     return VLC_SUCCESS;
 }
 

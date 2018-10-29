@@ -53,6 +53,8 @@
 #include <QScreen>
 #include <QSequentialAnimationGroup>
 
+#include <vlc_aout.h>
+
 namespace {
     int const MIN_SLIDER_VALUE = 0;
     int const MAX_SLIDER_VALUE = 10000;
@@ -63,8 +65,8 @@ namespace {
     int const FADEOUT_DELAY = 2000;
 }
 
-SeekSlider::SeekSlider( Qt::Orientation q, QWidget *_parent, bool _static )
-          : QSlider( q, _parent ), b_classic( _static ), animLoading( NULL )
+SeekSlider::SeekSlider( intf_thread_t *p_intf, Qt::Orientation q, QWidget *_parent, bool _static )
+          : QSlider( q, _parent ), p_intf( p_intf ), b_classic( _static ), animLoading( NULL )
 {
     isSliding = false;
     isJumping = false;
@@ -198,7 +200,7 @@ void SeekSlider::setChapters( SeekPoints *chapters_ )
  * \param time Elapsed time. Unused
  * \param legnth Duration time.
  ***/
-void SeekSlider::setPosition( float pos, int64_t time, int length )
+void SeekSlider::setPosition( float pos, vlc_tick_t time, int length )
 {
     VLC_UNUSED(time);
     if( pos == -1.0  || ! b_seekable )
@@ -320,7 +322,7 @@ void SeekSlider::mousePressEvent( QMouseEvent* event )
                 int i_min_diff = i_width + 1;
                 for( int i = 0 ; i < points.count() ; i++ )
                 {
-                    int x = points.at(i).time / 1000000.0 / inputLength * i_width;
+                    int x = points.at(i).time / (double)CLOCK_FREQ / inputLength * i_width;
                     int diff_x = abs( x - event->x() );
                     if ( diff_x < i_min_diff )
                     {
@@ -376,7 +378,7 @@ void SeekSlider::mouseMoveEvent( QMouseEvent *event )
             int i_selected = -1;
             for( int i = 0 ; i < points.count() ; i++ )
             {
-                int x = margin + points.at(i).time / 1000000.0 / inputLength * (size().width() - 2*margin);
+                int x = margin + points.at(i).time / (double)CLOCK_FREQ / inputLength * (size().width() - 2*margin);
                 if ( event->x() >= x )
                     i_selected = i;
             }
@@ -401,10 +403,12 @@ void SeekSlider::wheelEvent( QWheelEvent *event )
     /* Don't do anything if we are for somehow reason sliding */
     if( !isSliding && isEnabled() )
     {
-        setValue( value() + event->delta() / 12 ); /* 12 = 8 * 15 / 10
-         Since delta is in 1/8 of ° and mouse have steps of 15 °
-         and that our slider is in 0.1% and we want one step to be a 1%
-         increment of position */
+        int64_t i_size = var_InheritInteger( p_intf->obj.libvlc, "short-jump-size" );
+        int i_mode = var_InheritInteger( p_intf->obj.libvlc, "hotkeys-x-wheel-mode" );
+        if ( ( event->delta() < 0 && i_mode != 3 ) || ( event->delta() > 0 && i_mode == 3 ) )
+            i_size = - i_size;
+        float posOffset = static_cast<float>( i_size ) / static_cast<float>( inputLength );
+        setValue( value() + posOffset * maximum() );
         emit sliderDragged( value() / static_cast<float>( maximum() ) );
     }
     event->accept();

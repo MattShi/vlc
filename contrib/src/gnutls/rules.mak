@@ -1,6 +1,6 @@
 # GnuTLS
 
-GNUTLS_VERSION := 3.5.16
+GNUTLS_VERSION := 3.5.18
 GNUTLS_URL := ftp://ftp.gnutls.org/gcrypt/gnutls/v3.5/gnutls-$(GNUTLS_VERSION).tar.xz
 
 ifdef BUILD_NETWORK
@@ -19,7 +19,6 @@ $(TARBALLS)/gnutls-$(GNUTLS_VERSION).tar.xz:
 
 gnutls: gnutls-$(GNUTLS_VERSION).tar.xz .sum-gnutls
 	$(UNPACK)
-	$(APPLY) $(SRC)/gnutls/32b5628-upstream.patch
 	$(APPLY) $(SRC)/gnutls/gnutls-pkgconfig-static.patch
 ifdef HAVE_WIN32
 	$(APPLY) $(SRC)/gnutls/gnutls-win32.patch
@@ -75,10 +74,22 @@ ifeq ($(ARCH),x86_64)
 	GNUTLS_CONF += --disable-hardware-acceleration
 endif
 endif
+ifdef HAVE_WIN32
+	GNUTLS_CONF += --without-libidn2
+ifdef HAVE_CLANG
+ifeq ($(ARCH),aarch64)
+	GNUTLS_CONF += --disable-hardware-acceleration
+endif
+endif
+endif
+
+ifdef HAVE_NACL
+	GNUTLS_CONF += --disable-hardware-acceleration
+endif
 
 .gnutls: gnutls
 	$(RECONF)
 	cd $< && $(GNUTLS_ENV) ./configure $(GNUTLS_CONF)
-	cd $</gl && $(MAKE) install
-	cd $</lib && $(MAKE) install
+	cd $< && $(MAKE) -C gl install
+	cd $< && $(MAKE) -C lib install
 	touch $@

@@ -123,13 +123,13 @@ struct subsys
     int item_type;
 };
 
-struct services_discovery_sys_t
+typedef struct
 {
     const struct subsys *subsys;
     struct udev_monitor *monitor;
     vlc_thread_t         thread;
     void                *root;
-};
+} services_discovery_sys_t;
 
 /**
  * Compares two devices (to support binary search).
@@ -168,7 +168,8 @@ static int AddDevice (services_discovery_t *sd, struct udev_device *dev)
     if (mrl == NULL)
         return 0; /* don't know if it was an error... */
     char *name = p_sys->subsys->get_name (dev);
-    input_item_t *item = input_item_NewExt (mrl, name ? name : mrl, -1,
+    input_item_t *item = input_item_NewExt (mrl, name ? name : mrl,
+                                            INPUT_DURATION_INDEFINITE,
                                             p_sys->subsys->item_type, ITEM_LOCAL);
     msg_Dbg (sd, "adding %s (%s)", mrl, name);
     free (name);

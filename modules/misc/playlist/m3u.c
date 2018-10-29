@@ -84,18 +84,18 @@ static void DoChildren( playlist_export_t *p_export, playlist_item_t *p_root,
         {
             char *psz_artist = input_item_GetArtist( p_current->p_input );
             if( psz_artist == NULL ) psz_artist = strdup( "" );
-            mtime_t i_duration = input_item_GetDuration( p_current->p_input );
+            vlc_tick_t i_duration = input_item_GetDuration( p_current->p_input );
             if( psz_artist && *psz_artist )
             {
                 /* write EXTINF with artist */
                 pf_fprintf( p_export->p_file, "#EXTINF:%"PRIu64",%s - %s\n",
-                            i_duration / CLOCK_FREQ, psz_artist, psz_name);
+                            SEC_FROM_VLC_TICK(i_duration), psz_artist, psz_name);
             }
             else
             {
                 /* write EXTINF without artist */
                 pf_fprintf( p_export->p_file, "#EXTINF:%"PRIu64",%s\n",
-                            i_duration / CLOCK_FREQ, psz_name);
+                            SEC_FROM_VLC_TICK(i_duration), psz_name);
             }
             free( psz_artist );
         }

@@ -46,17 +46,6 @@
  */
 
 /**
- * Vout configuration
- */
-typedef struct {
-    vout_thread_t        *vout;
-    vlc_object_t         *input;
-    bool                 change_fmt;
-    const video_format_t *fmt;
-    unsigned             dpb_size;
-} vout_configuration_t;
-
-/**
  * Video output thread private structure
  */
 typedef struct vout_thread_sys_t vout_thread_sys_t;
@@ -88,45 +77,6 @@ struct vout_thread_t {
  *****************************************************************************/
 
 /**
- * Returns a suitable vout or release the given one.
- *
- * If cfg->fmt is non NULL and valid, a vout will be returned, reusing cfg->vout
- * is possible, otherwise it returns NULL.
- * If cfg->vout is not used, it will be closed and released.
- *
- * You can release the returned value either by vout_Request or vout_Close()
- * followed by a vlc_object_release() or shorter vout_CloseAndRelease()
- *
- * \param object a vlc object
- * \param cfg the video configuration requested.
- * \return a vout
- */
-VLC_API vout_thread_t * vout_Request( vlc_object_t *object, const vout_configuration_t *cfg );
-#define vout_Request(a,b) vout_Request(VLC_OBJECT(a),b)
-
-/**
- * This function will close a vout created by vout_Request.
- * The associated vout module is closed.
- * Note: It is not released yet, you'll have to call vlc_object_release()
- * or use the convenient vout_CloseAndRelease().
- *
- * \param p_vout the vout to close
- */
-VLC_API void vout_Close( vout_thread_t *p_vout );
-
-/**
- * This function will close a vout created by vout_Create
- * and then release it.
- *
- * \param p_vout the vout to close and release
- */
-static inline void vout_CloseAndRelease( vout_thread_t *p_vout )
-{
-    vout_Close( p_vout );
-    vlc_object_release( p_vout );
-}
-
-/**
  * This function will handle a snapshot request.
  *
  * pp_image, pp_picture and p_fmt can be NULL otherwise they will be
@@ -144,7 +94,7 @@ static inline void vout_CloseAndRelease( vout_thread_t *p_vout )
 VLC_API int vout_GetSnapshot( vout_thread_t *p_vout,
                               block_t **pp_image, picture_t **pp_picture,
                               video_format_t *p_fmt,
-                              const char *psz_format, mtime_t i_timeout );
+                              const char *psz_format, vlc_tick_t i_timeout );
 
 VLC_API void vout_ChangeAspectRatio( vout_thread_t *p_vout,
                                      unsigned int i_num, unsigned int i_den );
@@ -164,4 +114,4 @@ VLC_API void vout_FlushSubpictureChannel( vout_thread_t *, int );
 
 /**@}*/
 
-#endif /* _VLC_VIDEO_H */
+#endif /* _VLC_VOUT_H */

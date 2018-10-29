@@ -38,21 +38,24 @@
 
 typedef struct filter_owner_sys_t filter_owner_sys_t;
 
+struct filter_video_callbacks
+{
+    picture_t *(*buffer_new)(filter_t *);
+};
+
+struct filter_subpicture_callbacks
+{
+    subpicture_t *(*buffer_new)(filter_t *);
+};
+
 typedef struct filter_owner_t
 {
-    void *sys;
-
     union
     {
-        struct
-        {
-            picture_t * (*buffer_new)( filter_t * );
-        } video;
-        struct
-        {
-            subpicture_t * (*buffer_new)( filter_t * );
-        } sub;
+        const struct filter_video_callbacks *video;
+        const struct filter_subpicture_callbacks *sub;
     };
+    void *sys;
 } filter_owner_t;
 
 struct vlc_mouse_t;
@@ -68,7 +71,7 @@ struct filter_t
 
     /* Module properties */
     module_t *          p_module;
-    filter_sys_t *      p_sys;
+    void               *p_sys;
 
     /* Input format */
     es_format_t         fmt_in;
@@ -95,7 +98,7 @@ struct filter_t
                                  int, int, int );
 
         /** Generate a subpicture (sub source) */
-        subpicture_t *(*pf_sub_source)( filter_t *, mtime_t );
+        subpicture_t *(*pf_sub_source)( filter_t *, vlc_tick_t );
 
         /** Filter a subpicture (sub filter) */
         subpicture_t *(*pf_sub_filter)( filter_t *, subpicture_t * );
@@ -147,7 +150,7 @@ struct filter_t
      * XXX use filter_GetInputAttachments */
     int (*pf_get_attachments)( filter_t *, input_attachment_t ***, int * );
 
-    /* Private structure for the owner of the decoder */
+    /** Private structure for the owner of the filter */
     filter_owner_t      owner;
 };
 
@@ -162,7 +165,7 @@ struct filter_t
  */
 static inline picture_t *filter_NewPicture( filter_t *p_filter )
 {
-    picture_t *pic = p_filter->owner.video.buffer_new( p_filter );
+    picture_t *pic = p_filter->owner.video->buffer_new( p_filter );
     if( pic == NULL )
         msg_Warn( p_filter, "can't get output picture" );
     return pic;
@@ -208,7 +211,7 @@ static inline block_t *filter_DrainAudio( filter_t *p_filter )
  */
 static inline subpicture_t *filter_NewSubpicture( filter_t *p_filter )
 {
-    subpicture_t *subpic = p_filter->owner.sub.buffer_new( p_filter );
+    subpicture_t *subpic = p_filter->owner.sub->buffer_new( p_filter );
     if( subpic == NULL )
         msg_Warn( p_filter, "can't get output subpicture" );
     return subpic;
@@ -431,7 +434,7 @@ VLC_API void filter_chain_VideoFlush( filter_chain_t * );
  * \param display_date of subpictures
  */
 void filter_chain_SubSource(filter_chain_t *chain, spu_t *,
-                            mtime_t display_date);
+                            vlc_tick_t display_date);
 
 /**
  * Apply filter chain to subpictures.

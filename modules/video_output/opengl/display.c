@@ -51,8 +51,7 @@ vlc_module_begin ()
     set_capability ("vout display", 265)
     set_callbacks (Open, Close)
     add_shortcut ("opengles2", "gles2")
-    add_module ("gles2", "opengl es2", NULL,
-                GLES2_TEXT, PROVIDER_LONGTEXT, true)
+    add_module("gles2", "opengl es2", NULL, GLES2_TEXT, PROVIDER_LONGTEXT)
 
 #else
 
@@ -65,8 +64,7 @@ vlc_module_begin ()
     set_capability ("vout display", 270)
     set_callbacks (Open, Close)
     add_shortcut ("opengl", "gl")
-    add_module ("gl", "opengl", NULL,
-                GL_TEXT, PROVIDER_LONGTEXT, true)
+    add_module("gl", "opengl", NULL, GL_TEXT, PROVIDER_LONGTEXT)
 #endif
     add_glopts ()
 vlc_module_end ()
@@ -80,8 +78,8 @@ struct vout_display_sys_t
 
 /* Display callbacks */
 static picture_pool_t *Pool (vout_display_t *, unsigned);
-static void PictureRender (vout_display_t *, picture_t *, subpicture_t *);
-static void PictureDisplay (vout_display_t *, picture_t *, subpicture_t *);
+static void PictureRender (vout_display_t *, picture_t *, subpicture_t *, vlc_tick_t);
+static void PictureDisplay (vout_display_t *, picture_t *);
 static int Control (vout_display_t *, int, va_list);
 
 /**
@@ -97,13 +95,7 @@ static int Open (vlc_object_t *obj)
     sys->gl = NULL;
     sys->pool = NULL;
 
-    vout_window_t *surface = vout_display_NewWindow (vd, VOUT_WINDOW_TYPE_INVALID);
-    if (surface == NULL)
-    {
-        msg_Err (vd, "parent window not available");
-        goto error;
-    }
-
+    vout_window_t *surface = vd->cfg->window;
     char *gl_name = var_InheritString(surface, MODULE_VARNAME);
 
     /* VDPAU GL interop works only with GLX. Override the "gl" option to force
@@ -118,8 +110,12 @@ static int Open (vlc_object_t *obj)
             case VLC_CODEC_VDPAU_VIDEO_420:
             {
                 /* Force the option only if it was not previously set */
-                if (gl_name == NULL)
+                if (gl_name == NULL || gl_name[0] == 0
+                 || strcmp(gl_name, "any") == 0)
+                {
+                    free(gl_name);
                     gl_name = strdup("glx");
+                }
                 break;
             }
             default:
@@ -160,8 +156,6 @@ static int Open (vlc_object_t *obj)
 error:
     if (sys->gl != NULL)
         vlc_gl_Release (sys->gl);
-    if (surface != NULL)
-        vout_display_DeleteWindow (vd, surface);
     free (sys);
     return VLC_EGENERIC;
 }
@@ -174,14 +168,12 @@ static void Close (vlc_object_t *obj)
     vout_display_t *vd = (vout_display_t *)obj;
     vout_display_sys_t *sys = vd->sys;
     vlc_gl_t *gl = sys->gl;
-    vout_window_t *surface = gl->surface;
 
     vlc_gl_MakeCurrent (gl);
     vout_display_opengl_Delete (sys->vgl);
     vlc_gl_ReleaseCurrent (gl);
 
     vlc_gl_Release (gl);
-    vout_display_DeleteWindow (vd, surface);
     free (sys);
 }
 
@@ -200,8 +192,10 @@ static picture_pool_t *Pool (vout_display_t *vd, unsigned count)
     return sys->pool;
 }
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+                           vlc_tick_t date)
 {
+    VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
 
     if (vlc_gl_MakeCurrent (sys->gl) == VLC_SUCCESS)
@@ -211,19 +205,16 @@ static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *sub
     }
 }
 
-static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureDisplay (vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *sys = vd->sys;
+    VLC_UNUSED(pic);
 
     if (vlc_gl_MakeCurrent (sys->gl) == VLC_SUCCESS)
     {
         vout_display_opengl_Display (sys->vgl, &vd->source);
         vlc_gl_ReleaseCurrent (sys->gl);
     }
-
-    picture_Release (pic);
-    if (subpicture != NULL)
-        subpicture_Delete(subpicture);
 }
 
 static int Control (vout_display_t *vd, int query, va_list ap)
@@ -252,7 +243,7 @@ static int Control (vout_display_t *vd, int query, va_list ap)
             c.align.vertical = VOUT_DISPLAY_ALIGN_TOP;
 
         vout_display_PlacePicture (&place, src, &c, false);
-        vlc_gl_Resize (sys->gl, place.width, place.height);
+        vlc_gl_Resize (sys->gl, c.display.width, c.display.height);
         if (vlc_gl_MakeCurrent (sys->gl) != VLC_SUCCESS)
             return VLC_EGENERIC;
         vout_display_opengl_SetWindowAspectRatio(sys->vgl, (float)place.width / place.height);

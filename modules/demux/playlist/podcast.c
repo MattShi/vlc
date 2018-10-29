@@ -39,7 +39,7 @@
  * Local prototypes
  *****************************************************************************/
 static int ReadDir( stream_t *, input_item_node_t * );
-static mtime_t strTimeToMTime( const char *psz );
+static vlc_tick_t strTimeToMTime( const char *psz );
 
 /*****************************************************************************
  * Import_podcast: main import function
@@ -375,16 +375,16 @@ error:
     return VLC_EGENERIC;
 }
 
-static mtime_t strTimeToMTime( const char *psz )
+static vlc_tick_t strTimeToMTime( const char *psz )
 {
     int h, m, s;
     switch( sscanf( psz, "%u:%u:%u", &h, &m, &s ) )
     {
     case 3:
-        return (mtime_t)( ( h*60 + m )*60 + s ) * 1000000;
+        return vlc_tick_from_sec( ( h*60 + m )*60 + s );
     case 2:
-        return (mtime_t)( h*60 + m ) * 1000000;
+        return vlc_tick_from_sec( h*60 + m );
     default:
-        return -1;
+        return INPUT_DURATION_UNSET;
     }
 }

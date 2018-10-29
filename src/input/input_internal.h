@@ -46,8 +46,6 @@ struct input_stats;
 /* input_source_t: gathers all information per input source */
 typedef struct
 {
-    struct vlc_common_members obj;
-
     demux_t  *p_demux; /**< Demux object (most downstream) */
 
     /* Title infos for that input */
@@ -71,23 +69,57 @@ typedef struct
     bool b_rescale_ts;
     double f_fps;
 
+    /* sub-fps handling */
+    bool b_slave_sub;
+    unsigned i_sub_rate;
+
     /* */
-    int64_t i_pts_delay;
+    vlc_tick_t i_pts_delay;
 
     bool       b_eof;   /* eof of demuxer */
 
 } input_source_t;
 
+typedef union
+{
+    vlc_value_t val;
+    vlc_viewpoint_t viewpoint;
+    vlc_es_id_t *id;
+    struct {
+        bool b_fast_seek;
+        vlc_tick_t i_val;
+    } time;
+    struct {
+        bool b_fast_seek;
+        float f_val;
+    } pos;
+    struct {
+        bool b_absolute;
+        vlc_tick_t i_val;
+    } delay;
+    struct {
+        vlc_es_id_t *id;
+        unsigned page;
+    } vbi_page;
+    struct {
+        vlc_es_id_t *id;
+        bool enabled;
+    } vbi_transparency;
+} input_control_param_t;
+
 typedef struct
 {
     int         i_type;
-    vlc_value_t val;
+    input_control_param_t param;
 } input_control_t;
 
 /** Private input fields */
 typedef struct input_thread_private_t
 {
     struct input_thread_t input;
+
+    input_thread_events_cb events_cb;
+    void *events_data;
 
     /* Global properties */
     bool        b_preparsing;
@@ -103,10 +135,13 @@ typedef struct input_thread_private_t
     int         i_rate;
 
     /* Playtime configuration and state */
-    int64_t     i_start;    /* :start-time,0 by default */
-    int64_t     i_stop;     /* :stop-time, 0 if none */
-    int64_t     i_time;     /* Current time */
-    bool        b_fast_seek;/* :input-fast-seek */
+    vlc_tick_t  i_start;    /* :start-time,0 by default */
+    vlc_tick_t  i_stop;     /* :stop-time, 0 if none */
+    vlc_tick_t  i_time;     /* Current time */
+
+    /* Delays */
+    vlc_tick_t  i_audio_delay;
+    vlc_tick_t  i_spu_delay;
 
     /* Output */
     bool            b_out_pace_control; /* XXX Move it ot es_sout ? */
@@ -144,6 +179,11 @@ typedef struct input_thread_private_t
     /* Slave sources (subs, and others) */
     int            i_slave;
     input_source_t **slave;
+    unsigned i_slave_subs_rate;
+
+    /* Last ES added */
+    enum es_format_category_e i_last_es_cat;
+    int                       i_last_es_id;
 
     /* Resources */
     input_resource_t *p_resource;
@@ -155,7 +195,7 @@ typedef struct input_thread_private_t
     /* Buffer of pending actions */
     vlc_mutex_t lock_control;
     vlc_cond_t  wait_control;
-    int i_control;
+    size_t i_control;
     input_control_t control[INPUT_CONTROL_FIFO_SIZE];
 
     vlc_thread_t thread;
@@ -177,8 +217,10 @@ enum input_control_e
     INPUT_CONTROL_SET_RATE,
 
     INPUT_CONTROL_SET_POSITION,
+    INPUT_CONTROL_JUMP_POSITION,
 
     INPUT_CONTROL_SET_TIME,
+    INPUT_CONTROL_JUMP_TIME,
 
     INPUT_CONTROL_SET_PROGRAM,
 
@@ -200,7 +242,11 @@ enum input_control_e
     INPUT_CONTROL_NAV_POPUP,
     INPUT_CONTROL_NAV_MENU,
 
+    INPUT_CONTROL_SET_ES_BY_ID,
+    INPUT_CONTROL_RESTART_ES_BY_ID,
+
     INPUT_CONTROL_SET_ES,
+    INPUT_CONTROL_UNSET_ES,
     INPUT_CONTROL_RESTART_ES,
 
     INPUT_CONTROL_SET_VIEWPOINT,    // new absolute viewpoint
@@ -211,25 +257,56 @@ enum input_control_e
     INPUT_CONTROL_SET_SPU_DELAY,
 
     INPUT_CONTROL_ADD_SLAVE,
+    INPUT_CONTROL_SET_SUBS_FPS,
 
     INPUT_CONTROL_SET_RECORD_STATE,
 
     INPUT_CONTROL_SET_FRAME_NEXT,
 
     INPUT_CONTROL_SET_RENDERER,
+
+    INPUT_CONTROL_SET_VBI_PAGE,
+    INPUT_CONTROL_SET_VBI_TRANSPARENCY,
 };
 
 /* Internal helpers */
 
+void input_ControlPush( input_thread_t *, int, const input_control_param_t * );
+
 /* XXX for string value you have to allocate it before calling
- * input_ControlPush
+ * input_ControlPushHelper
  */
-void input_ControlPush( input_thread_t *, int i_type, vlc_value_t * );
+static inline void input_ControlPushHelper( input_thread_t *p_input, int i_type, vlc_value_t *val )
+{
+    if( val != NULL )
+    {
+        input_control_param_t param = { .val = *val };
+        input_ControlPush( p_input, i_type, &param );
+    }
+    else
+    {
+        input_ControlPush( p_input, i_type, NULL );
+    }
+}
+
+static inline void input_ControlPushEsHelper( input_thread_t *p_input, int i_type,
+                                              vlc_es_id_t *id )
+{
+    assert( i_type == INPUT_CONTROL_SET_ES || i_type == INPUT_CONTROL_UNSET_ES ||
+            i_type == INPUT_CONTROL_RESTART_ES );
+    input_ControlPush( p_input, i_type, &(input_control_param_t) {
+        .id = vlc_es_id_Hold( id ),
+    } );
+}
 
 bool input_Stopped( input_thread_t * );
 
+int input_GetAttachments(input_thread_t *input, input_attachment_t ***attachments);
+
+input_attachment_t *input_GetAttachment(input_thread_t *input, const char *name);
+
 /* Bound pts_delay */
-#define INPUT_PTS_DELAY_MAX INT64_C(60000000)
+#define INPUT_PTS_DELAY_MAX VLC_TICK_FROM_SEC(60)
 
 /**********************************************************************
  * Item metadata
@@ -243,10 +320,6 @@ void input_ExtractAttachmentAndCacheArt( input_thread_t *, const char *name );
  ***************************************************************************/
 
 /* var.c */
-void input_ControlVarInit ( input_thread_t * );
-void input_ControlVarStop( input_thread_t * );
-void input_ControlVarNavigation( input_thread_t * );
-void input_ControlVarTitle( input_thread_t *, int i_title );
 
 void input_ConfigVarInit ( input_thread_t * );
 
@@ -254,16 +327,9 @@ void input_ConfigVarInit ( input_thread_t * );
 int subtitles_Detect( input_thread_t *, char *, const char *, input_item_slave_t ***, int * );
 int subtitles_Filter( const char *);
 
-/* input.c */
-void input_SplitMRL( const char **, const char **, const char **,
-                     const char **, char * );
-
 /* meta.c */
 void vlc_audio_replay_gain_MergeFromMeta( audio_replay_gain_t *p_dst,
                                           const vlc_meta_t *p_meta );
-
-/* item.c */
-void input_item_node_PostAndDelete( input_item_node_t *p_node );
 
 /* stats.c */
 typedef struct input_rate_t
@@ -273,8 +339,8 @@ typedef struct input_rate_t
     uintmax_t value;
     struct
     {
-        uintmax_t value;
-        mtime_t   date;
+        uintmax_t  value;
+        vlc_tick_t date;
     } samples[2];
 } input_rate_t;
 

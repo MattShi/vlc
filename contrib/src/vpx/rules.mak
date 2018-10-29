@@ -1,28 +1,37 @@
 # libvpx
 
-VPX_VERSION := 1.6.1
-VPX_URL := http://storage.googleapis.com/downloads.webmproject.org/releases/webm/libvpx-$(VPX_VERSION).tar.bz2
+VPX_VERSION := 1.7.0
+VPX_URL := http://github.com/webmproject/libvpx/archive/v${VPX_VERSION}.tar.gz
 
 PKGS += vpx
 ifeq ($(call need_pkg,"vpx >= 1.5.0"),)
 PKGS_FOUND += vpx
 endif
 
-$(TARBALLS)/libvpx-$(VPX_VERSION).tar.bz2:
+$(TARBALLS)/libvpx-$(VPX_VERSION).tar.gz:
 	$(call download_pkg,$(VPX_URL),vpx)
 
-.sum-vpx: libvpx-$(VPX_VERSION).tar.bz2
+.sum-vpx: libvpx-$(VPX_VERSION).tar.gz
 
-libvpx: libvpx-$(VPX_VERSION).tar.bz2 .sum-vpx
+libvpx: libvpx-$(VPX_VERSION).tar.gz .sum-vpx
 	$(UNPACK)
 	$(APPLY) $(SRC)/vpx/libvpx-mac.patch
 	$(APPLY) $(SRC)/vpx/libvpx-ios.patch
 ifdef HAVE_ANDROID
 	$(APPLY) $(SRC)/vpx/libvpx-android.patch
+	$(APPLY) $(SRC)/vpx/libvpx-android-fix_cortex_a8-flag.patch
+	$(APPLY) $(SRC)/vpx/libvpx-android-toolchain_path.patch
 endif
+	$(APPLY) $(SRC)/vpx/0001-ads2gas-Add-a-noelf-option.patch
+	$(APPLY) $(SRC)/vpx/0002-configure-Add-an-armv7-win32-gcc-target.patch
+	$(APPLY) $(SRC)/vpx/0003-configure-Add-an-arm64-win64-gcc-target.patch
 	$(MOVE)
 
 DEPS_vpx =
+
+ifdef HAVE_WIN32
+DEPS_vpx += pthreads $(DEPS_pthreads)
+endif
 
 ifdef HAVE_CROSS_COMPILE
 VPX_CROSS := $(HOST)-
@@ -54,6 +63,8 @@ else ifeq ($(ARCH),sparc)
 VPX_ARCH := sparc
 else ifeq ($(ARCH),x86_64)
 VPX_ARCH := x86_64
+else ifeq ($(ARCH),aarch64)
+VPX_ARCH := arm64
 endif
 
 ifdef HAVE_ANDROID
@@ -61,11 +72,7 @@ VPX_OS := android
 else ifdef HAVE_LINUX
 VPX_OS := linux
 else ifdef HAVE_MACOSX
-ifeq ($(OSX_VERSION),10.5)
-VPX_OS := darwin9
-else
 VPX_OS := darwin10
-endif
 VPX_CROSS :=
 else ifdef HAVE_IOS
 ifeq ($(ARCH),arm)
@@ -99,8 +106,16 @@ VPX_CONF := \
 	--disable-dependency-tracking \
 	--enable-vp9-highbitdepth
 
+ifndef HAVE_WIN32
 ifndef HAVE_IOS
 VPX_CONF += --enable-runtime-cpu-detect
+endif
+else
+# WIN32
+ifeq ($(filter arm aarch64, $(ARCH)),)
+# Only enable runtime cpu detect on architectures other than arm/aarch64
+VPX_CONF += --enable-runtime-cpu-detect
+endif
 endif
 
 ifndef BUILD_ENCODERS
@@ -120,7 +135,7 @@ VPX_CONF += --sdk-path=$(IOS_SDK) --enable-vp8-decoder
 ifdef HAVE_TVOS
 VPX_LDFLAGS := -L$(IOS_SDK)/usr/lib -isysroot $(IOS_SDK) -mtvos-version-min=9.0
 else
-VPX_LDFLAGS := -L$(IOS_SDK)/usr/lib -isysroot $(IOS_SDK) -miphoneos-version-min=6.1
+VPX_LDFLAGS := -L$(IOS_SDK)/usr/lib -isysroot $(IOS_SDK) -miphoneos-version-min=8.4
 endif
 ifeq ($(ARCH),aarch64)
 VPX_LDFLAGS += -arch arm64
@@ -135,7 +150,7 @@ ifdef HAVE_ANDROID
 # uses that path to look for the compiler (which we already know)
 VPX_CONF += --sdk-path=$(shell dirname $(shell which $(HOST)-clang))
 # broken text relocations
-ifeq ($(ARCH),x86_64)
+ifneq ($(filter i386 x86_64,$(ARCH)),)
 VPX_CONF += --disable-mmx
 endif
 endif

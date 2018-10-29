@@ -27,6 +27,9 @@
 #endif
 
 #include <vlc/vlc.h>
+#include <vlc_common.h>
+#include <vlc_charset.h>
+
 #include <stdlib.h>
 #include <locale.h>
 #include <signal.h>
@@ -244,21 +247,13 @@ int main(int i_argc, const char *ppsz_argv[])
         language = (CFStringRef)CFPreferencesCopyAppValue(CFSTR("language"),
                                                           kCFPreferencesCurrentApplication);
         if (language) {
-            CFIndex length = CFStringGetLength(language) + 1;
-            if (length > 0) {
-                CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8);
-                lang = (char *)malloc(maxSize);
-                if(lang) {
-                    CFStringGetCString(language, lang, maxSize - 1, kCFStringEncodingUTF8);
-                    if (strncmp( lang, "auto", 4 )) {
-                        char tmp[11];
-                        snprintf(tmp, 11, "LANG=%s", lang);
-                        putenv(tmp);
-
-                    }
-                }
-                free(lang);
+            lang = FromCFString(language, kCFStringEncodingUTF8);
+            if (strncmp( lang, "auto", 4 )) {
+                char tmp[11];
+                snprintf(tmp, 11, "LANG=%s", lang);
+                putenv(tmp);
             }
+            free(lang);
             CFRelease(language);
         }
     }
@@ -288,9 +283,11 @@ int main(int i_argc, const char *ppsz_argv[])
 
     libvlc_add_intf(vlc, "hotkeys,none");
 
-    if (libvlc_add_intf(vlc, NULL))
+    if (libvlc_add_intf(vlc, NULL)) {
+        fprintf(stderr, "VLC cannot start any interface. Exiting.\n");
         goto out;
-    libvlc_playlist_play(vlc, -1, 0, NULL);
+    }
+    libvlc_playlist_play(vlc);
 
     /*
      * Run the main loop. If the mac interface is not initialized, only the CoreFoundation

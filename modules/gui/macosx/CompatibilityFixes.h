@@ -1,7 +1,7 @@
 /*****************************************************************************
  * CompatibilityFixes.h: MacOS X interface module
  *****************************************************************************
- * Copyright (C) 2011-2017 VLC authors and VideoLAN
+ * Copyright (C) 2011-2018 VLC authors and VideoLAN
  * $Id$
  *
  * Authors: Felix Paul Kühne <fkuehne -at- videolan -dot- org>
@@ -24,37 +24,15 @@
 
 #import <Cocoa/Cocoa.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 #pragma mark -
-#pragma OS detection code
-#define OSX_LION_AND_HIGHER (NSAppKitVersionNumber >= 1115.2)
-#define OSX_MOUNTAIN_LION_AND_HIGHER (NSAppKitVersionNumber >= 1162)
-#define OSX_MAVERICKS_AND_HIGHER (NSAppKitVersionNumber >= 1244)
-#define OSX_YOSEMITE_AND_HIGHER (NSAppKitVersionNumber >= 1334)
-#define OSX_EL_CAPITAN_AND_HIGHER (NSAppKitVersionNumber >= 1404)
-#define OSX_SIERRA_AND_HIGHER (NSAppKitVersionNumber >= 1485)
-#define OSX_HIGH_SIERRA_AND_HIGHER (NSAppKitVersionNumber >= 1560)
+void swapoutOverride(Class _Nonnull cls, SEL _Nonnull selector);
 
+#ifndef MAC_OS_X_VERSION_10_14
 
-// Sierra only APIs
-#ifndef MAC_OS_X_VERSION_10_12
-
-typedef NS_OPTIONS(NSUInteger, NSStatusItemBehavior) {
-
-    NSStatusItemBehaviorRemovalAllowed = (1 << 1),
-    NSStatusItemBehaviorTerminationOnRemoval = (1 << 2),
-};
-
-@interface NSStatusItem(IntroducedInSierra)
-
-@property (assign) NSStatusItemBehavior behavior;
-@property (assign, getter=isVisible) BOOL visible;
-@property (null_resettable, copy) NSString *autosaveName;
-
-@end
-
-typedef NSUInteger NSWindowStyleMask;
+extern NSString *const NSAppearanceNameDarkAqua;
 
 #endif
 
-void swapoutOverride(Class _Nonnull cls, SEL _Nonnull selector);
-
+NS_ASSUME_NONNULL_END

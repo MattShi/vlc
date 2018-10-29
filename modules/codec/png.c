@@ -55,10 +55,10 @@ typedef struct png_sys_t png_sys_t;
 /*****************************************************************************
  * decoder_sys_t : png decoder descriptor
  *****************************************************************************/
-struct decoder_sys_t
+typedef struct
 {
     PNG_SYS_COMMON_MEMBERS
-};
+} decoder_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -71,11 +71,11 @@ static int DecodeBlock  ( decoder_t *, block_t * );
 /*
  * png encoder descriptor
  */
-struct encoder_sys_t
+typedef struct
 {
     PNG_SYS_COMMON_MEMBERS
     int i_blocksize;
-};
+} encoder_sys_t;
 
 static int  OpenEncoder(vlc_object_t *);
 static void CloseEncoder(vlc_object_t *);
@@ -116,14 +116,17 @@ static int OpenDecoder( vlc_object_t *p_this )
     }
 
     /* Allocate the memory needed to store the decoder's structure */
-    p_dec->p_sys = malloc( sizeof(decoder_sys_t) );
-    if( p_dec->p_sys == NULL )
+    decoder_sys_t *p_sys = malloc( sizeof(decoder_sys_t) );
+    if( p_sys == NULL )
         return VLC_ENOMEM;
+    p_dec->p_sys = p_sys;
 
-    p_dec->p_sys->p_obj = p_this;
+    p_sys->p_obj = p_this;
 
     /* Set output properties */
     p_dec->fmt_out.i_codec = VLC_CODEC_RGBA;
+    p_dec->fmt_out.video.transfer = TRANSFER_FUNC_SRGB;
+    p_dec->fmt_out.video.b_color_range_full = true;
 
     /* Set callbacks */
     p_dec->pf_decode = DecodeBlock;
@@ -303,7 +306,7 @@ static int DecodeBlock( decoder_t *p_dec, block_t *p_block )
     png_destroy_read_struct( &p_png, &p_info, &p_end_info );
     free( p_row_pointers );
 
-    p_pic->date = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : p_block->i_dts;
+    p_pic->date = p_block->i_pts != VLC_TICK_INVALID ? p_block->i_pts : p_block->i_dts;
 
     block_Release( p_block );
     decoder_QueueVideo( p_dec, p_pic );
@@ -336,13 +339,14 @@ static int OpenEncoder(vlc_object_t *p_this)
         return VLC_EGENERIC;
 
     /* Allocate the memory needed to store the encoder's structure */
-    p_enc->p_sys = malloc( sizeof(encoder_sys_t) );
-    if( p_enc->p_sys  == NULL )
+    encoder_sys_t *p_sys = malloc( sizeof(encoder_sys_t) );
+    if( p_sys == NULL )
         return VLC_ENOMEM;
+    p_enc->p_sys = p_sys;
 
-    p_enc->p_sys->p_obj = p_this;
+    p_sys->p_obj = p_this;
 
-    p_enc->p_sys->i_blocksize = 3 * p_enc->fmt_in.video.i_visible_width *
+    p_sys->i_blocksize = 3 * p_enc->fmt_in.video.i_visible_width *
         p_enc->fmt_in.video.i_visible_height;
 
     p_enc->fmt_in.i_codec = VLC_CODEC_RGB24;

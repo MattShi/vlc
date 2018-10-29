@@ -64,7 +64,6 @@ vlc_module_end ()
 struct vout_display_sys_t
 {
     xcb_connection_t *conn;
-    vout_window_t *embed; /* VLC window */
 
     xcb_window_t window; /* drawable X window */
     xcb_gcontext_t gc; /* context to put images */
@@ -76,7 +75,7 @@ struct vout_display_sys_t
 };
 
 static picture_pool_t *Pool (vout_display_t *, unsigned);
-static void Display (vout_display_t *, picture_t *, subpicture_t *subpicture);
+static void Display (vout_display_t *, picture_t *);
 static int Control (vout_display_t *, int, va_list);
 
 static void ResetPictures (vout_display_t *);
@@ -113,8 +112,7 @@ static int Open (vlc_object_t *obj)
     /* Get window, connect to X server */
     xcb_connection_t *conn;
     const xcb_screen_t *scr;
-    sys->embed = vlc_xcb_parent_Create(vd, &conn, &scr);
-    if (sys->embed == NULL)
+    if (vlc_xcb_parent_Create(vd, &conn, &scr) == NULL)
     {
         free (sys);
         return VLC_EGENERIC;
@@ -271,7 +269,7 @@ found_format:;
 
         xcb_create_pixmap (conn, sys->depth, pixmap, scr->root, 1, 1);
         c = xcb_create_window_checked (conn, sys->depth, sys->window,
-                                       sys->embed->handle.xid, 0, 0,
+                                       vd->cfg->window->handle.xid, 0, 0,
                                        vd->cfg->display.width,
                                        vd->cfg->display.height, 0,
                                        XCB_WINDOW_CLASS_INPUT_OUTPUT,
@@ -325,7 +323,6 @@ static void Close (vlc_object_t *obj)
 
     /* colormap, window and context are garbage-collected by X */
     xcb_disconnect (sys->conn);
-    vout_display_DeleteWindow (vd, sys->embed);
     free (sys);
 }
 
@@ -396,7 +393,7 @@ static picture_pool_t *Pool (vout_display_t *vd, unsigned requested_count)
 /**
  * Sends an image to the X server.
  */
-static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void Display (vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *sys = vd->sys;
     xcb_shm_seg_t segment = XCB_picture_GetSegment(pic);
@@ -405,7 +402,7 @@ static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpictur
     vlc_xcb_Manage(vd, sys->conn, &sys->visible);
 
     if (!sys->visible)
-        goto out;
+        return;
     if (segment != 0)
         ck = xcb_shm_put_image_checked (sys->conn, sys->window, sys->gc,
           /* real width */ pic->p->i_pitch / pic->p->i_pixel_pitch,
@@ -442,9 +439,6 @@ static void Display (vout_display_t *vd, picture_t *pic, subpicture_t *subpictur
     /* FIXME might be WAY better to wait in some case (be carefull with
      * VOUT_DISPLAY_RESET_PICTURES if done) + does not work with
      * vout_display wrapper. */
-out:
-    picture_Release (pic);
-    (void)subpicture;
 }
 
 static int Control (vout_display_t *vd, int query, va_list ap)

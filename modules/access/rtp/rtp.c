@@ -96,7 +96,7 @@ vlc_module_begin ()
     set_description (N_("Real-Time Protocol (RTP) input"))
     set_category (CAT_INPUT)
     set_subcategory (SUBCAT_INPUT_DEMUX)
-    set_capability ("access_demux", 0)
+    set_capability ("access", 0)
     set_callbacks (Open, Close)
 
     add_integer ("rtcp-port", 0, RTCP_PORT_TEXT,
@@ -161,6 +161,9 @@ static int Open (vlc_object_t *obj)
 {
     demux_t *demux = (demux_t *)obj;
     int tp; /* transport protocol */
+
+    if (demux->out == NULL)
+        return VLC_EGENERIC;
 
     if (!strcasecmp(demux->psz_name, "dccp"))
         tp = IPPROTO_DCCP;
@@ -260,8 +263,7 @@ static int Open (vlc_object_t *obj)
     p_sys->fd           = fd;
     p_sys->rtcp_fd      = rtcp_fd;
     p_sys->max_src      = var_CreateGetInteger (obj, "rtp-max-src");
-    p_sys->timeout      = var_CreateGetInteger (obj, "rtp-timeout")
-                        * CLOCK_FREQ;
+    p_sys->timeout      = vlc_tick_from_sec( var_CreateGetInteger (obj, "rtp-timeout") );
     p_sys->max_dropout  = var_CreateGetInteger (obj, "rtp-max-dropout");
     p_sys->max_misorder = var_CreateGetInteger (obj, "rtp-max-misorder");
     p_sys->thread_ready = false;
@@ -380,8 +382,8 @@ static int Control (demux_t *demux, int query, va_list args)
     {
         case DEMUX_GET_PTS_DELAY:
         {
-            int64_t *v = va_arg (args, int64_t *);
-            *v = INT64_C(1000) * var_InheritInteger (demux, "network-caching");
+            *va_arg (args, vlc_tick_t *) =
+                VLC_TICK_FROM_MS( var_InheritInteger (demux, "network-caching") );
             return VLC_SUCCESS;
         }
 
@@ -410,8 +412,7 @@ static int Control (demux_t *demux, int query, va_list args)
         case DEMUX_GET_LENGTH:
         case DEMUX_GET_TIME:
         {
-            int64_t *v = va_arg (args, int64_t *);
-            *v = 0;
+            *va_arg (args, vlc_tick_t *) = 0;
             return VLC_SUCCESS;
         }
     }
@@ -442,7 +443,7 @@ void codec_decode (demux_t *demux, void *data, block_t *block)
 {
     if (data)
     {
-        block->i_dts = VLC_TS_INVALID; /* RTP does not specify this */
+        block->i_dts = VLC_TICK_INVALID; /* RTP does not specify this */
         es_out_SetPCR(demux->out, block->i_pts);
         es_out_Send (demux->out, (es_out_id_t *)data, block);
     }
@@ -637,12 +638,7 @@ static void mpv_decode (demux_t *demux, void *data, block_t *block)
  */
 static void *ts_init (demux_t *demux)
 {
-    char const* name = demux->psz_name;
-
-    if (*name == '\0' || !strcasecmp(name, "any"))
-        name = NULL;
-
-    return stream_init (demux, name ? name : "ts");
+    return stream_init (demux, "ts");
 }
 
 

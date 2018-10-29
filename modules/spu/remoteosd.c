@@ -125,8 +125,8 @@ vlc_module_begin ()
         RMTOSD_HOST_LONGTEXT, false )
     add_integer_with_range( RMTOSD_CFG "port", 20001, 1, 0xFFFF,
         RMTOSD_PORT_TEXT, RMTOSD_PORT_LONGTEXT, false )
-    add_password( RMTOSD_CFG "password", "", RMTOSD_PASSWORD_TEXT,
-        RMTOSD_PASSWORD_LONGTEXT, false )
+    add_password(RMTOSD_CFG "password", "", RMTOSD_PASSWORD_TEXT,
+                 RMTOSD_PASSWORD_LONGTEXT)
     add_integer_with_range( RMTOSD_CFG "update", RMTOSD_UPDATE_DEFAULT,
         RMTOSD_UPDATE_MIN, RMTOSD_UPDATE_MAX, RMTOSD_UPDATE_TEXT,
         RMTOSD_UPDATE_LONGTEXT, true )
@@ -148,8 +148,10 @@ vlc_module_end ()
 #define CHALLENGESIZE 16
 #define MAX_VNC_SERVER_NAME_LENGTH 255
 
+typedef struct filter_sys_t filter_sys_t;
+
 /* subsource functions */
-static subpicture_t *Filter( filter_t *, mtime_t );
+static subpicture_t *Filter( filter_t *, vlc_tick_t );
 
 static int MouseEvent( filter_t *,
                        const vlc_mouse_t *,
@@ -183,7 +185,7 @@ static inline bool raw_line(  filter_sys_t* p_sys,
                               uint16_t i_x, uint16_t i_y,
                               uint16_t i_w );
 
-static void vnc_encrypt_bytes( unsigned char *bytes, char *passwd );
+static int vnc_encrypt_bytes( unsigned char *bytes, char *passwd );
 
 
 /*****************************************************************************
@@ -392,7 +394,9 @@ static int vnc_connect( filter_t *p_filter )
             goto error;
         }
 
-        vnc_encrypt_bytes( challenge, p_sys->psz_passwd );
+        int err = vnc_encrypt_bytes( challenge, p_sys->psz_passwd );
+	if (err != VLC_SUCCESS)
+	    return false;
 
         if( !write_exact(p_filter, fd, challenge, CHALLENGESIZE ) )
         {
@@ -698,15 +702,14 @@ static void* update_request_thread( void *obj )
 {
     filter_t* p_filter = (filter_t*)obj;
     int canc = vlc_savecancel();
-    mtime_t interval = var_InheritInteger( p_filter, RMTOSD_CFG "update" );
+    vlc_tick_t interval = VLC_TICK_FROM_MS( var_InheritInteger( p_filter, RMTOSD_CFG "update" ) );
     vlc_restorecancel(canc);
 
-    if( interval < 100 )
-        interval = 100;
-    interval *= 1000; /* ms -> µs */
+    if( interval < VLC_TICK_FROM_MS(100) )
+        interval = VLC_TICK_FROM_MS(100);
 
     do
-        msleep( interval );
+        vlc_tick_sleep( interval );
     while( write_update_request( p_filter, true ) );
 
     return NULL;
@@ -970,7 +973,7 @@ static bool process_server_message ( filter_t *p_filter,
  ****************************************************************************
  * This function outputs subpictures at regular time intervals.
  ****************************************************************************/
-static subpicture_t *Filter( filter_t *p_filter, mtime_t date )
+static subpicture_t *Filter( filter_t *p_filter, vlc_tick_t date )
 {
     filter_sys_t *p_sys = p_filter->p_sys;
     subpicture_t *p_spu;
@@ -1312,7 +1315,7 @@ static int KeyEvent( vlc_object_t *p_this, char const *psz_var,
     return VLC_SUCCESS;
 }
 
-static void vnc_encrypt_bytes( unsigned char *bytes, char *passwd )
+static int vnc_encrypt_bytes( unsigned char *bytes, char *passwd )
 {
     unsigned char key[8];
 
@@ -1320,7 +1323,9 @@ static void vnc_encrypt_bytes( unsigned char *bytes, char *passwd )
         key[i] = i < strlen( passwd ) ? passwd[i] : '\0';
 
     gcry_cipher_hd_t ctx;
-    gcry_cipher_open( &ctx, GCRY_CIPHER_DES, GCRY_CIPHER_MODE_ECB,0);
+    int err = gcry_cipher_open( &ctx, GCRY_CIPHER_DES, GCRY_CIPHER_MODE_ECB,0);
+    if (err)
+	return VLC_EGENERIC;
 
     /* reverse bits of the key */
     for( unsigned i = 0 ; i < 8 ; i++ )
@@ -1337,5 +1342,6 @@ static void vnc_encrypt_bytes( unsigned char *bytes, char *passwd )
     gcry_cipher_setkey( ctx, key, 8 );
     gcry_cipher_encrypt( ctx, bytes, CHALLENGESIZE, bytes, CHALLENGESIZE );
     gcry_cipher_close( ctx );
+    return VLC_SUCCESS;
 }
 

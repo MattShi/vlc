@@ -39,13 +39,13 @@ static void input_rate_Init(input_rate_t *rate)
     vlc_mutex_init(&rate->lock);
     rate->updates = 0;
     rate->value = 0;
-    rate->samples[0].date = VLC_TS_INVALID;
-    rate->samples[1].date = VLC_TS_INVALID;
+    rate->samples[0].date = VLC_TICK_INVALID;
+    rate->samples[1].date = VLC_TICK_INVALID;
 }
 
 static float stats_GetRate(const input_rate_t *rate)
 {
-    if (rate->samples[1].date == VLC_TS_INVALID)
+    if (rate->samples[1].date == VLC_TICK_INVALID)
         return 0.;
 
     return (rate->samples[0].value - rate->samples[1].value)
@@ -124,9 +124,9 @@ void input_rate_Add(input_rate_t *counter, uintmax_t val)
     counter->value += val;
 
     /* Ignore samples within a second of another */
-    mtime_t now = mdate();
-    if (counter->samples[0].date != VLC_TS_INVALID
-     && (now - counter->samples[0].date) < CLOCK_FREQ)
+    vlc_tick_t now = vlc_tick_now();
+    if (counter->samples[0].date != VLC_TICK_INVALID
+     && (now - counter->samples[0].date) < VLC_TICK_FROM_SEC(1))
         return;
 
     memcpy(counter->samples + 1, counter->samples,

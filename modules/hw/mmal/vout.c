@@ -153,8 +153,7 @@ static int configure_display(vout_display_t *vd, const vout_display_cfg_t *cfg,
 static picture_pool_t *vd_pool(vout_display_t *vd, unsigned count);
 static void vd_prepare(vout_display_t *vd, picture_t *picture,
                 subpicture_t *subpicture);
-static void vd_display(vout_display_t *vd, picture_t *picture,
-                subpicture_t *subpicture);
+static void vd_display(vout_display_t *vd, picture_t *picture);
 static int vd_control(vout_display_t *vd, int query, va_list args);
 static void vd_manage(vout_display_t *vd);
 
@@ -301,12 +300,12 @@ static int Open(vlc_object_t *object)
     vd->prepare = vd_prepare;
     vd->display = vd_display;
     vd->control = vd_control;
-    vd->manage = vd_manage;
 
     vc_tv_register_callback(tvservice_cb, vd);
 
     if (query_resolution(vd, &sys->display_width, &sys->display_height) >= 0) {
-        vout_display_SendEventDisplaySize(vd, sys->display_width, sys->display_height);
+        vout_window_ReportSize(vd->cfg->window,
+                               sys->display_width, sys->display_height);
     } else {
         sys->display_width = vd->cfg->display.width;
         sys->display_height = vd->cfg->display.height;
@@ -314,8 +313,6 @@ static int Open(vlc_object_t *object)
 
     sys->dmx_handle = vc_dispmanx_display_open(0);
     vd->info.subpicture_chromas = subpicture_chromas;
-
-    vout_display_DeleteWindow(vd, NULL);
 
 out:
     if (ret != VLC_SUCCESS)
@@ -451,7 +448,6 @@ static picture_pool_t *vd_pool(vout_display_t *vd, unsigned count)
     vout_display_sys_t *sys = vd->sys;
     picture_resource_t picture_res;
     picture_pool_configuration_t picture_pool_cfg;
-    video_format_t fmt = vd->fmt;
     MMAL_STATUS_T status;
     unsigned i;
 
@@ -518,7 +514,7 @@ static picture_pool_t *vd_pool(vout_display_t *vd, unsigned count)
         picture_res.p_sys->owner = (vlc_object_t *)vd;
         picture_res.p_sys->buffer = mmal_queue_get(sys->pool->queue);
 
-        sys->pictures[i] = picture_NewFromResource(&fmt, &picture_res);
+        sys->pictures[i] = picture_NewFromResource(&vd->fmt, &picture_res);
         if (!sys->pictures[i]) {
             msg_Err(vd, "Failed to create picture");
             free(picture_res.p_sys);
@@ -545,8 +541,10 @@ out:
 }
 
 static void vd_prepare(vout_display_t *vd, picture_t *picture,
-                subpicture_t *subpicture)
+                       subpicture_t *subpicture, vlc_tick_t date)
 {
+    vd_manage(vd);
+    VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
     picture_sys_t *pic_sys = picture->p_sys;
 
@@ -558,8 +556,7 @@ static void vd_prepare(vout_display_t *vd, picture_t *picture,
     picture->date += sys->phase_offset;
 }
 
-static void vd_display(vout_display_t *vd, picture_t *picture,
-                subpicture_t *subpicture)
+static void vd_display(vout_display_t *vd, picture_t *picture)
 {
     vout_display_sys_t *sys = vd->sys;
     picture_sys_t *pic_sys = picture->p_sys;
@@ -580,7 +577,7 @@ static void vd_display(vout_display_t *vd, picture_t *picture,
     if (!pic_sys->displayed || !sys->opaque) {
         buffer->cmd = 0;
         buffer->length = sys->input->buffer_size;
-        buffer->user_data = picture;
+        buffer->user_data = picture_Hold(picture);
 
         status = mmal_port_send_buffer(sys->input, buffer);
         if (status == MMAL_SUCCESS)
@@ -592,14 +589,9 @@ static void vd_display(vout_display_t *vd, picture_t *picture,
         }
 
         pic_sys->displayed = true;
-    } else {
-        picture_Release(picture);
     }
 
     display_subpicture(vd, subpicture);
-
-    if (subpicture)
-        subpicture_Delete(subpicture);
 
     if (sys->next_phase_check == 0 && sys->adjust_refresh_rate)
         maintain_phase_sync(vd);
@@ -667,7 +659,7 @@ static void vd_manage(vout_display_t *vd)
         if (query_resolution(vd, &width, &height) >= 0) {
             sys->display_width = width;
             sys->display_height = height;
-            vout_display_SendEventDisplaySize(vd, width, height);
+            vout_window_ReportSize(vd->cfg->window, width, height);
         }
 
         sys->need_configure_display = false;
@@ -969,7 +961,7 @@ static void maintain_phase_sync(vout_display_t *vd)
     MMAL_PARAMETER_VIDEO_RENDER_STATS_T render_stats = {
         .hdr = { MMAL_PARAMETER_VIDEO_RENDER_STATS, sizeof(render_stats) },
     };
-    int32_t frame_duration = 1000000 /
+    int32_t frame_duration = CLOCK_FREQ /
         ((double)vd->sys->i_frame_rate /
         vd->sys->i_frame_rate_base);
     vout_display_sys_t *sys = vd->sys;

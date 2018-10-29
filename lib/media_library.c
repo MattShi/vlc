@@ -31,6 +31,7 @@
 #include <vlc_common.h>
 
 #include "libvlc_internal.h"
+#include "media_list_internal.h"
 
 struct libvlc_media_library_t
 {
@@ -104,7 +105,7 @@ void libvlc_media_library_retain( libvlc_media_library_t * p_mlib )
  **************************************************************************/
 int libvlc_media_library_load( libvlc_media_library_t * p_mlib )
 {
-    char *psz_datadir = config_GetUserDir( VLC_DATA_DIR );
+    char *psz_datadir = config_GetUserDir( VLC_USERDATA_DIR );
     char * psz_uri;
 
     if( psz_datadir == NULL

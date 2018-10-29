@@ -68,7 +68,7 @@
 #endif
 
 #define PBO_DISPLAY_COUNT 2 /* Double buffering */
-struct picture_sys_t
+typedef struct
 {
     vlc_gl_t    *gl;
     PFNGLDELETEBUFFERSPROC DeleteBuffers;
@@ -76,7 +76,7 @@ struct picture_sys_t
     size_t      bytes[PICTURE_PLANE_MAX];
     GLsync      fence;
     unsigned    index;
-};
+} picture_sys_t;
 
 struct priv
 {
@@ -139,6 +139,8 @@ pbo_picture_create(const opengl_tex_converter_t *tc, bool direct_rendering)
         picsys->gl = tc->gl;
         vlc_gl_Hold(picsys->gl);
     }
+
+    /* XXX: needed since picture_NewFromResource override pic planes */
     if (picture_Setup(pic, &tc->fmt))
     {
         picture_Release(pic);
@@ -154,7 +156,10 @@ pbo_picture_create(const opengl_tex_converter_t *tc, bool direct_rendering)
 
         if( p->i_pitch < 0 || p->i_lines <= 0 ||
             (size_t)p->i_pitch > SIZE_MAX/p->i_lines )
+        {
+            picture_Release(pic);
             return NULL;
+        }
         picsys->bytes[i] = (p->i_pitch * p->i_lines) + 15 / 16 * 16;
     }
     return pic;
@@ -216,6 +221,7 @@ tc_pbo_update(const opengl_tex_converter_t *tc, GLuint *textures,
     struct priv *priv = tc->priv;
 
     picture_t *display_pic = priv->pbo.display_pics[priv->pbo.display_idx];
+    picture_sys_t *p_sys = display_pic->p_sys;
     priv->pbo.display_idx = (priv->pbo.display_idx + 1) % PBO_DISPLAY_COUNT;
 
     for (int i = 0; i < pic->i_planes; i++)
@@ -223,14 +229,14 @@ tc_pbo_update(const opengl_tex_converter_t *tc, GLuint *textures,
         GLsizeiptr size = pic->p[i].i_lines * pic->p[i].i_pitch;
         const GLvoid *data = pic->p[i].p_pixels;
         tc->vt->BindBuffer(GL_PIXEL_UNPACK_BUFFER,
-                            display_pic->p_sys->buffers[i]);
+                           p_sys->buffers[i]);
         tc->vt->BufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, size, data);
 
         tc->vt->ActiveTexture(GL_TEXTURE0 + i);
         tc->vt->BindTexture(tc->tex_target, textures[i]);
 
-        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH,
-                            pic->p[i].i_pitch / pic->p[i].i_pixel_pitch);
+        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH, pic->p[i].i_pitch
+            * tex_width[i] / (pic->p[i].i_visible_pitch ? pic->p[i].i_visible_pitch : 1));
 
         tc->vt->TexSubImage2D(tc->tex_target, 0, 0, 0, tex_width[i], tex_height[i],
                               tc->texs[i].format, tc->texs[i].type, NULL);
@@ -276,26 +282,19 @@ persistent_map(const opengl_tex_converter_t *tc, picture_t *pic)
     return VLC_SUCCESS;
 }
 
-/** Find next (bit) set */
-static int fnsll(unsigned long long x, unsigned i)
-{
-    if (i >= CHAR_BIT * sizeof (x))
-        return 0;
-    return ffsll(x & ~((1ULL << i) - 1));
-}
-
 static void
 persistent_release_gpupics(const opengl_tex_converter_t *tc, bool force)
 {
     struct priv *priv = tc->priv;
+    unsigned long long list = priv->persistent.list;
 
     /* Release all pictures that are not used by the GPU anymore */
-    for (unsigned i = ffsll(priv->persistent.list); i;
-         i = fnsll(priv->persistent.list, i))
+    while (list != 0)
     {
-        assert(priv->persistent.pics[i - 1] != NULL);
+        int i = ctz(list);
+        assert(priv->persistent.pics[i] != NULL);
 
-        picture_t *pic = priv->persistent.pics[i - 1];
+        picture_t *pic = priv->persistent.pics[i];
         picture_sys_t *picsys = pic->p_sys;
 
         assert(picsys->fence != NULL);
@@ -307,10 +306,11 @@ persistent_release_gpupics(const opengl_tex_converter_t *tc, bool force)
             tc->vt->DeleteSync(picsys->fence);
             picsys->fence = NULL;
 
-            priv->persistent.list &= ~(1ULL << (i - 1));
-            priv->persistent.pics[i - 1] = NULL;
+            priv->persistent.list &= ~(1ULL << i);
+            priv->persistent.pics[i] = NULL;
             picture_Release(pic);
         }
+        list &= ~(1ULL << i);
     }
 }
 
@@ -332,8 +332,8 @@ tc_persistent_update(const opengl_tex_converter_t *tc, GLuint *textures,
         tc->vt->ActiveTexture(GL_TEXTURE0 + i);
         tc->vt->BindTexture(tc->tex_target, textures[i]);
 
-        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH,
-                            pic->p[i].i_pitch / pic->p[i].i_pixel_pitch);
+        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH, pic->p[i].i_pitch
+                                * tex_width[i] / pic->p[i].i_visible_pitch);
 
         tc->vt->TexSubImage2D(tc->tex_target, 0, 0, 0, tex_width[i], tex_height[i],
                               tc->texs[i].format, tc->texs[i].type, NULL);
@@ -350,7 +350,7 @@ tc_persistent_update(const opengl_tex_converter_t *tc, GLuint *textures,
     }
 
     picsys->fence = tc->vt->FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-    if (pic->p_sys->fence == NULL)
+    if (picsys->fence == NULL)
     {
         /* Error (corner case): don't hold the picture */
         hold = false;
@@ -361,7 +361,7 @@ tc_persistent_update(const opengl_tex_converter_t *tc, GLuint *textures,
     if (hold)
     {
         /* Hold the picture while it's used by the GPU */
-        unsigned index = pic->p_sys->index;
+        unsigned index = picsys->index;
 
         priv->persistent.list |= 1ULL << index;
         assert(priv->persistent.pics[index] == NULL);
@@ -390,11 +390,13 @@ tc_persistent_get_pool(const opengl_tex_converter_t *tc, unsigned requested_coun
         picture_t *pic = pictures[count] = pbo_picture_create(tc, true);
         if (pic == NULL)
             break;
+
+        picture_sys_t *p_sys = pic->p_sys;
 #ifndef NDEBUG
         for (int i = 0; i < pic->i_planes; ++i)
-            assert(pic->p_sys->bytes[i] == pictures[0]->p_sys->bytes[i]);
+            assert(p_sys->bytes[i] == ((picture_sys_t *) pictures[0]->p_sys)->bytes[i]);
 #endif
-        pic->p_sys->index = count;
+        p_sys->index = count;
 
         if (persistent_map(tc, pic) != VLC_SUCCESS)
         {
@@ -440,7 +442,7 @@ tc_common_allocate_textures(const opengl_tex_converter_t *tc, GLuint *textures,
 static int
 upload_plane(const opengl_tex_converter_t *tc, unsigned tex_idx,
              GLsizei width, GLsizei height,
-             unsigned pitch, unsigned pixel_pitch, const void *pixels)
+             unsigned pitch, unsigned visible_pitch, const void *pixels)
 {
     struct priv *priv = tc->priv;
     GLenum tex_format = tc->texs[tex_idx].format;
@@ -451,12 +453,12 @@ upload_plane(const opengl_tex_converter_t *tc, unsigned tex_idx,
 
     if (!priv->has_unpack_subimage)
     {
-#define ALIGN(x, y) (((x) + ((y) - 1)) & ~((y) - 1))
-        unsigned dst_width = width;
-        unsigned dst_pitch = ALIGN(dst_width * pixel_pitch, 4);
-        if (pitch != dst_pitch)
+        if (pitch != visible_pitch)
         {
-            size_t buf_size = dst_pitch * height * pixel_pitch;
+#define ALIGN(x, y) (((x) + ((y) - 1)) & ~((y) - 1))
+            visible_pitch = ALIGN(visible_pitch, 4);
+#undef ALIGN
+            size_t buf_size = visible_pitch * height;
             const uint8_t *source = pixels;
             uint8_t *destination;
             if (priv->texture_temp_buf_size < buf_size)
@@ -474,9 +476,9 @@ upload_plane(const opengl_tex_converter_t *tc, unsigned tex_idx,
 
             for (GLsizei h = 0; h < height ; h++)
             {
-                memcpy(destination, source, width * pixel_pitch);
+                memcpy(destination, source, visible_pitch);
                 source += pitch;
-                destination += dst_pitch;
+                destination += visible_pitch;
             }
             tc->vt->TexSubImage2D(tc->tex_target, 0, 0, 0, width, height,
                                   tex_format, tex_type, priv->texture_temp_buf);
@@ -486,11 +488,10 @@ upload_plane(const opengl_tex_converter_t *tc, unsigned tex_idx,
             tc->vt->TexSubImage2D(tc->tex_target, 0, 0, 0, width, height,
                                   tex_format, tex_type, pixels);
         }
-#undef ALIGN
     }
     else
     {
-        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH, pitch / pixel_pitch);
+        tc->vt->PixelStorei(GL_UNPACK_ROW_LENGTH, pitch * width / (visible_pitch ? visible_pitch : 1));
         tc->vt->TexSubImage2D(tc->tex_target, 0, 0, 0, width, height,
                               tex_format, tex_type, pixels);
     }
@@ -502,7 +503,6 @@ tc_common_update(const opengl_tex_converter_t *tc, GLuint *textures,
                  const GLsizei *tex_width, const GLsizei *tex_height,
                  picture_t *pic, const size_t *plane_offset)
 {
-    assert(pic->p_sys == NULL);
     int ret = VLC_SUCCESS;
     for (unsigned i = 0; i < tc->tex_count && ret == VLC_SUCCESS; i++)
     {
@@ -514,7 +514,7 @@ tc_common_update(const opengl_tex_converter_t *tc, GLuint *textures,
                              pic->p[i].p_pixels;
 
         ret = upload_plane(tc, i, tex_width[i], tex_height[i],
-                           pic->p[i].i_pitch, pic->p[i].i_pixel_pitch, pixels);
+                           pic->p[i].i_pitch, pic->p[i].i_visible_pitch, pixels);
     }
     return ret;
 }
@@ -586,25 +586,30 @@ opengl_tex_converter_generic_init(opengl_tex_converter_t *tc, bool allow_dr)
     tc->pf_update            = tc_common_update;
     tc->pf_allocate_textures = tc_common_allocate_textures;
 
-    if (allow_dr)
+    /* OpenGL or OpenGL ES2 with GL_EXT_unpack_subimage ext */
+    priv->has_unpack_subimage =
+        !tc->is_gles || vlc_gl_StrHasToken(tc->glexts, "GL_EXT_unpack_subimage");
+
+    if (allow_dr && priv->has_unpack_subimage)
     {
         bool supports_map_persistent = false;
 
-        const bool has_pbo =
-            HasExtension(tc->glexts, "GL_ARB_pixel_buffer_object") ||
-            HasExtension(tc->glexts, "GL_EXT_pixel_buffer_object");
-
-        const bool has_bs =
-            HasExtension(tc->glexts, "GL_ARB_buffer_storage") ||
-            HasExtension(tc->glexts, "GL_EXT_buffer_storage");
-
-        /* Ensure we do direct rendering with OpenGL 3.0 or higher. Indeed,
-         * persistent mapped buffers seems to be slow with OpenGL 2.1 drivers
-         * and bellow. This may be caused by OpenGL compatibility layer. */
+        /* Ensure we do direct rendering / PBO with OpenGL 3.0 or higher.
+         * Indeed, persistent mapped buffers or PBO seems to be slow with
+         * OpenGL 2.1 drivers and bellow. This may be caused by OpenGL
+         * compatibility layer. */
         const unsigned char *ogl_version = tc->vt->GetString(GL_VERSION);
         const bool glver_ok = strverscmp((const char *)ogl_version, "3.0") >= 0;
 
-        supports_map_persistent = glver_ok && has_pbo && has_bs && tc->gl->module
+        const bool has_pbo = glver_ok &&
+            (vlc_gl_StrHasToken(tc->glexts, "GL_ARB_pixel_buffer_object") ||
+             vlc_gl_StrHasToken(tc->glexts, "GL_EXT_pixel_buffer_object"));
+
+        const bool has_bs = has_pbo &&
+            (vlc_gl_StrHasToken(tc->glexts, "GL_ARB_buffer_storage") ||
+             vlc_gl_StrHasToken(tc->glexts, "GL_EXT_buffer_storage"));
+
+        supports_map_persistent = has_bs && tc->gl->module
             && tc->vt->BufferStorage && tc->vt->MapBufferRange && tc->vt->FlushMappedBufferRange
             && tc->vt->UnmapBuffer && tc->vt->FenceSync && tc->vt->DeleteSync
             && tc->vt->ClientWaitSync;
@@ -626,9 +631,6 @@ opengl_tex_converter_generic_init(opengl_tex_converter_t *tc, bool allow_dr)
         }
     }
 
-    /* OpenGL or OpenGL ES2 with GL_EXT_unpack_subimage ext */
-    priv->has_unpack_subimage =
-        !tc->is_gles || HasExtension(tc->glexts, "GL_EXT_unpack_subimage");
     tc->fshader = fragment_shader;
 
     return VLC_SUCCESS;

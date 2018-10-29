@@ -48,8 +48,8 @@ typedef struct plane_t
     int i_pixel_pitch;
 
     /* Variables used for pictures with margins */
-    int i_visible_lines;            /**< How many visible lines are there ? */
-    int i_visible_pitch;            /**< How many visible pixels are there ? */
+    int i_visible_lines;            /**< How many visible lines are there? */
+    int i_visible_pitch;            /**< How many visible pixels are there? */
 
 } plane_t;
 
@@ -63,6 +63,14 @@ typedef struct picture_context_t
     void (*destroy)(struct picture_context_t *);
     struct picture_context_t *(*copy)(struct picture_context_t *);
 } picture_context_t;
+
+typedef struct picture_buffer_t
+{
+    int fd;
+    void *base;
+    size_t size;
+    off_t offset;
+} picture_buffer_t;
 
 /**
  * Video picture
@@ -81,7 +89,7 @@ struct picture_t
      * These properties can be modified using the video output thread API,
      * but should never be written directly */
     /**@{*/
-    mtime_t         date;                                  /**< display date */
+    vlc_tick_t      date;                                  /**< display date */
     bool            b_force;
     /**@}*/
 
@@ -89,15 +97,15 @@ struct picture_t
      * Those properties can be changed by the decoder
      * @{
      */
-    bool            b_progressive;          /**< is it a progressive frame ? */
+    bool            b_progressive;          /**< is it a progressive frame? */
     bool            b_top_field_first;             /**< which field is first */
-    unsigned int    i_nb_fields;                  /**< # of displayed fields */
+    unsigned int    i_nb_fields;                  /**< number of displayed fields */
     picture_context_t *context;      /**< video format-specific data pointer */
     /**@}*/
 
     /** Private data - the video output plugin might want to put stuff here to
      * keep track of the picture */
-    picture_sys_t * p_sys;
+    void           *p_sys;
 
     /** Next picture in a FIFO a pictures */
     struct picture_t *p_next;
@@ -124,7 +132,7 @@ VLC_API picture_t * picture_NewFromFormat( const video_format_t *p_fmt ) VLC_USE
  */
 typedef struct
 {
-    picture_sys_t *p_sys;
+    void *p_sys;
     void (*pf_destroy)(picture_t *);
 
     /* Plane resources
@@ -263,7 +271,7 @@ enum
  */
 static inline void picture_SwapUV(picture_t *picture)
 {
-    assert(picture->i_planes == 3);
+    vlc_assert(picture->i_planes == 3);
 
     plane_t tmp_plane   = picture->p[U_PLANE];
     picture->p[U_PLANE] = picture->p[V_PLANE];

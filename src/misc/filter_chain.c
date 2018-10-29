@@ -122,21 +122,24 @@ static picture_t *filter_chain_VideoBufferNew( filter_t *filter )
 
         /* XXX ugly */
         filter->owner.sys = chain->owner.sys;
-        picture_t *pic = chain->owner.video.buffer_new( filter );
+        picture_t *pic = chain->owner.video->buffer_new( filter );
         filter->owner.sys = chain;
         return pic;
     }
 }
+
+static const struct filter_video_callbacks filter_chain_video_cbs =
+{
+    .buffer_new = filter_chain_VideoBufferNew,
+};
 
 #undef filter_chain_NewVideo
 filter_chain_t *filter_chain_NewVideo( vlc_object_t *obj, bool allow_change,
                                        const filter_owner_t *restrict owner )
 {
     filter_owner_t callbacks = {
+        .video = &filter_chain_video_cbs,
         .sys = obj,
-        .video = {
-            .buffer_new = filter_chain_VideoBufferNew,
-        },
     };
 
     return filter_chain_NewInner( &callbacks, "video filter",
@@ -447,7 +450,7 @@ void filter_chain_VideoFlush( filter_chain_t *p_chain )
 }
 
 void filter_chain_SubSource( filter_chain_t *p_chain, spu_t *spu,
-                             mtime_t display_date )
+                             vlc_tick_t display_date )
 {
     for( chained_filter_t *f = p_chain->first; f != NULL; f = f->next )
     {

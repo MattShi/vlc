@@ -233,10 +233,10 @@ bool Win32Factory::init()
     OleInitialize( NULL );
 
     // Initialize the resource path
-    char *datadir = config_GetUserDir( VLC_DATA_DIR );
+    char *datadir = config_GetUserDir( VLC_USERDATA_DIR );
     m_resourcePath.push_back( (std::string)datadir + "\\skins" );
     free( datadir );
-    datadir = config_GetDataDir();
+    datadir = config_GetSysPath(VLC_PKG_DATA_DIR, NULL);
     m_resourcePath.push_back( (std::string)datadir + "\\skins" );
     m_resourcePath.push_back( (std::string)datadir + "\\skins2" );
     m_resourcePath.push_back( (std::string)datadir + "\\share\\skins" );
@@ -384,11 +384,12 @@ int Win32Factory::getScreenHeight() const
 }
 
 
-void Win32Factory::getMonitorInfo( const GenericWindow &rWindow,
+void Win32Factory::getMonitorInfo( OSWindow *pWindow,
                                    int* p_x, int* p_y,
                                    int* p_width, int* p_height ) const
 {
-    HWND wnd = (HWND)rWindow.getOSHandle();
+    Win32Window *pWin = (Win32Window*)pWindow;
+    HWND wnd = pWin->getHandle();
     HMONITOR hmon = MonitorFromWindow( wnd, MONITOR_DEFAULTTONEAREST );
     MONITORINFO mi;
     mi.cbSize = sizeof( MONITORINFO );

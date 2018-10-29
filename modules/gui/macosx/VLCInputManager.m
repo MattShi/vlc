@@ -1,7 +1,7 @@
 /*****************************************************************************
  * VLCInputManager.m: MacOS X interface module
  *****************************************************************************
- * Copyright (C) 2015 VLC authors and VideoLAN
+ * Copyright (C) 2015-2018 VLC authors and VideoLAN
  * $Id$
  *
  * This program is free software; you can redistribute it and/or modify
@@ -34,9 +34,19 @@
 #import "VLCResumeDialogController.h"
 #import "VLCTrackSynchronizationWindowController.h"
 #import "VLCVoutView.h"
+#import "VLCRemoteControlService.h"
 
 #import "iTunes.h"
 #import "Spotify.h"
+
+#import <MediaPlayer/MediaPlayer.h>
+
+@interface VLCInputManager()
+- (void)updateMainMenu;
+- (void)updateMainWindow;
+- (void)updateMetaAndInfo;
+- (void)updateDelays;
+@end
 
 #pragma mark Callbacks
 
@@ -89,10 +99,6 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
                 });
                 break;
             case INPUT_EVENT_ES:
-                break;
-            case INPUT_EVENT_TELETEXT:
-                break;
-            case INPUT_EVENT_AOUT:
                 break;
             case INPUT_EVENT_VOUT:
                 break;
@@ -155,6 +161,9 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
     BOOL b_has_itunes_paused;
     BOOL b_has_spotify_paused;
 
+    /* remote control support */
+    VLCRemoteControlService *_remoteControlService;
+
     NSTimer *hasEndedTimer;
 }
 @end
@@ -182,13 +191,28 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
 
         informInputChangedQueue = dispatch_queue_create("org.videolan.vlc.inputChangedQueue", DISPATCH_QUEUE_SERIAL);
 
+        if (@available(macOS 10.12.2, *)) {
+            _remoteControlService = [[VLCRemoteControlService alloc] init];
+            [_remoteControlService subscribeToRemoteCommands];
+        }
     }
     return self;
 }
 
-- (void)dealloc
+/*
+ * TODO: Investigate if this can be moved to dealloc again. Current problems:
+ * - dealloc might be never called of this object, as strong references could be in the
+ *   (already stopped) main loop, preventing the refcount to go 0.
+ * - Calling var_DelCallback waits for all callbacks to finish. Thus, while dealloc is already
+ *   called, callback might grab a reference to this object again, which could cause trouble.
+ */
+- (void)deinit
 {
     msg_Dbg(getIntf(), "Deinitializing input manager");
+    if (@available(macOS 10.12.2, *)) {
+        [_remoteControlService unsubscribeFromRemoteCommands];
+    }
+
     if (p_current_input) {
         /* continue playback where you left off */
         [self storePlaybackPositionForItem:p_current_input];
@@ -256,7 +280,7 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
      * The serial queue ensures that changed inputs are propagated in the same order as they arrive.
      */
     dispatch_async(informInputChangedQueue, ^{
-        [[o_main extensionsManager] inputChanged:p_input_changed];
+        [[self->o_main extensionsManager] inputChanged:p_input_changed];
         if (p_input_changed)
             vlc_object_release(p_input_changed);
     });
@@ -276,8 +300,7 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
         return;
     }
 
-    intf_thread_t *p_intf = getIntf();
-    int state = -1;
+    int64_t state = -1;
     if (p_current_input) {
         state = var_GetInteger(p_current_input, "state");
     }
@@ -297,13 +320,22 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
 
         [[o_main mainMenu] setPause];
         [[o_main mainWindow] setPause];
+
+        if (@available(macOS 10.12.2, *)) {
+            [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePlaying;
+        }
     } else {
         [[o_main mainMenu] setSubmenusEnabled: FALSE];
         [[o_main mainMenu] setPlay];
         [[o_main mainWindow] setPlay];
 
-        if (state == PAUSE_S)
+        if (state == PAUSE_S) {
             [self releaseSleepBlockers];
+
+            if (@available(macOS 10.12.2, *)) {
+                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStatePaused;
+            }
+        }
 
         if (state == END_S || state == -1) {
             /* continue playback where you left off */
@@ -318,6 +350,10 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
                                                            selector: @selector(onPlaybackHasEnded:)
                                                            userInfo: nil
                                                             repeats: NO];
+
+            if (@available(macOS 10.12.2, *)) {
+                [MPNowPlayingInfoCenter defaultCenter].playbackState = MPNowPlayingPlaybackStateStopped;
+            }
         }
     }
 
@@ -338,7 +374,7 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
 - (void)stopItunesPlayback
 {
     intf_thread_t *p_intf = getIntf();
-    int controlItunes = var_InheritInteger(p_intf, "macosx-control-itunes");
+    int64_t controlItunes = var_InheritInteger(p_intf, "macosx-control-itunes");
     if (controlItunes <= 0)
         return;
 
@@ -483,6 +519,38 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
 
     [[[o_main playlist] model] updateItem:p_input_item];
     [[[VLCMain sharedInstance] currentMediaInfoPanel] updatePanelWithItem:p_input_item];
+
+    if (!p_input_item) {
+        return;
+    }
+
+    if (@available(macOS 10.12.2, *)) {
+        NSMutableDictionary *currentlyPlayingTrackInfo = [NSMutableDictionary dictionary];
+
+        currentlyPlayingTrackInfo[MPMediaItemPropertyPlaybackDuration] = @(SEC_FROM_VLC_TICK(input_item_GetDuration(p_input_item)));
+        currentlyPlayingTrackInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = @(var_GetInteger(p_current_input, "time"));
+        currentlyPlayingTrackInfo[MPNowPlayingInfoPropertyPlaybackRate] = @(var_GetFloat(p_current_input, "rate"));
+
+        char *psz_title = input_item_GetTitle(p_input_item);
+        if (!psz_title)
+            psz_title = input_item_GetName(p_input_item);
+        currentlyPlayingTrackInfo[MPMediaItemPropertyTitle] = toNSStr(psz_title);
+        FREENULL(psz_title);
+
+        char *psz_artist = input_item_GetArtist(p_input_item);
+        currentlyPlayingTrackInfo[MPMediaItemPropertyArtist] = toNSStr(psz_artist);
+        FREENULL(psz_artist);
+
+        char *psz_album = input_item_GetAlbum(p_input_item);
+        currentlyPlayingTrackInfo[MPMediaItemPropertyAlbumTitle] = toNSStr(psz_album);
+        FREENULL(psz_album);
+
+        char *psz_track_number = input_item_GetTrackNumber(p_input_item);
+        currentlyPlayingTrackInfo[MPMediaItemPropertyAlbumTrackNumber] = @([toNSStr(psz_track_number) intValue]);
+        FREENULL(psz_track_number);
+
+        [MPNowPlayingInfoCenter defaultCenter].nowPlayingInfo = currentlyPlayingTrackInfo;
+    }
 }
 
 - (void)updateMainWindow
@@ -579,7 +647,7 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
     if (!lastPosition || lastPosition.intValue <= 0)
         return;
 
-    int settingValue = config_GetInt(getIntf(), "macosx-continue-playback");
+    int settingValue = (int)config_GetInt("macosx-continue-playback");
     if (settingValue == 2) // never resume
         return;
 
@@ -588,7 +656,7 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
         if (result == RESUME_RESTART)
             return;
 
-        mtime_t lastPos = (mtime_t)lastPosition.intValue * 1000000;
+        vlc_tick_t lastPos = vlc_tick_from_sec( lastPosition.intValue );
         msg_Dbg(getIntf(), "continuing playback at %lld", lastPos);
         var_SetInteger(p_input_thread, "time", lastPos);
     };
@@ -626,14 +694,14 @@ static int InputEvent(vlc_object_t *p_this, const char *psz_var,
     NSMutableDictionary *mutDict = [[NSMutableDictionary alloc] initWithDictionary:[defaults objectForKey:@"recentlyPlayedMedia"]];
 
     float relativePos = var_GetFloat(p_input_thread, "position");
-    mtime_t pos = var_GetInteger(p_input_thread, "time") / CLOCK_FREQ;
-    mtime_t dur = input_item_GetDuration(p_item) / 1000000;
+    long long pos = SEC_FROM_VLC_TICK(var_GetInteger(p_input_thread, "time"));
+    long long dur = SEC_FROM_VLC_TICK(input_item_GetDuration(p_item));
 
     NSMutableArray *mediaList = [[defaults objectForKey:@"recentlyPlayedMediaList"] mutableCopy];
 
     if (relativePos > .05 && relativePos < .95 && dur > 180) {
         msg_Dbg(getIntf(), "Store current playback position of %f", relativePos);
-        [mutDict setObject:[NSNumber numberWithInt:pos] forKey:url];
+        [mutDict setObject:[NSNumber numberWithInteger:pos] forKey:url];
 
         [mediaList removeObject:url];
         [mediaList addObject:url];

@@ -3,7 +3,9 @@
 FONTCONFIG_VERSION := 2.12.3
 FONTCONFIG_URL := https://www.freedesktop.org/software/fontconfig/release/fontconfig-$(FONTCONFIG_VERSION).tar.gz
 
+ifndef HAVE_WIN32
 PKGS += fontconfig
+endif
 ifeq ($(call need_pkg,"fontconfig >= 2.11"),)
 PKGS_FOUND += fontconfig
 endif
@@ -48,6 +50,10 @@ FONTCONFIG_ENV += LIBXML2_CFLAGS=`xml2-config --cflags`
 FONTCONFIG_ENV += LIBXML2_LIBS=`xml2-config --libs`
 endif
 
+ifdef HAVE_NACL
+FONTCONFIG_ENV += ac_cv_func_random=no
+endif
+
 DEPS_fontconfig = freetype2 $(DEPS_freetype2) libxml2 $(DEPS_libxml2)
 
 .fontconfig: fontconfig
@@ -60,7 +66,7 @@ ifndef HAVE_MACOSX
 	cd $< && $(MAKE) install
 else
 	cd $< && $(MAKE) install-exec
-	cd $</fontconfig && $(MAKE) install-data
+	cd $< && $(MAKE) -C fontconfig install-data
 	sed -e 's%/usr/lib/libiconv.la%%' -i.orig $(PREFIX)/lib/libfontconfig.la
 	cp $</fontconfig.pc $(PREFIX)/lib/pkgconfig/
 endif

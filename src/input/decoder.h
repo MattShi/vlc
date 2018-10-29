@@ -27,6 +27,7 @@
 
 #include <vlc_common.h>
 #include <vlc_codec.h>
+#include <vlc_mouse.h>
 
 decoder_t *input_DecoderNew( input_thread_t *, es_format_t *, input_clock_t *,
                              sout_instance_t * ) VLC_USED;
@@ -36,12 +37,21 @@ decoder_t *input_DecoderNew( input_thread_t *, es_format_t *, input_clock_t *,
  * The date parameter MUST hold the exact date at which the change has been
  * done for proper vout/aout pausing.
  */
-void input_DecoderChangePause( decoder_t *, bool b_paused, mtime_t i_date );
+void input_DecoderChangePause( decoder_t *, bool b_paused, vlc_tick_t i_date );
+
+/**
+ * Changes the decoder rate.
+ *
+ * This function changes rate of the intended playback speed to nominal speed.
+ * \param dec decoder
+ * \param rate playback rate (default is 1)
+ */
+void input_DecoderChangeRate( decoder_t *dec, float rate );
 
 /**
  * This function changes the delay.
  */
-void input_DecoderChangeDelay( decoder_t *, mtime_t i_delay );
+void input_DecoderChangeDelay( decoder_t *, vlc_tick_t i_delay );
 
 /**
  * This function makes the decoder start waiting for a valid data block from its fifo.
@@ -83,7 +93,7 @@ void input_DecoderGetCcDesc( decoder_t *, decoder_cc_desc_t * );
  * This function force the display of the next picture and fills the stream
  * time consumed.
  */
-void input_DecoderFrameNext( decoder_t *p_dec, mtime_t *pi_duration );
+void input_DecoderFrameNext( decoder_t *p_dec, vlc_tick_t *pi_duration );
 
 /**
  * This function will return true if the ES format or meta data have changed since
@@ -106,5 +116,9 @@ size_t input_DecoderGetFifoSize( decoder_t *p_dec );
  * They must be released using vlc_object_release().
  */
 void input_DecoderGetObjects( decoder_t *, vout_thread_t **, audio_output_t ** );
+
+void input_DecoderSetVoutMouseEvent( decoder_t *, vlc_mouse_event, void * );
+int  input_DecoderAddVoutOverlay( decoder_t *, subpicture_t *, int * );
+int  input_DecoderFlushVoutOverlay( decoder_t *, int );
 
 #endif

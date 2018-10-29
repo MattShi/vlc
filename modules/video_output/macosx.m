@@ -56,8 +56,9 @@ static int Open (vlc_object_t *);
 static void Close (vlc_object_t *);
 
 static picture_pool_t *Pool (vout_display_t *vd, unsigned requested_count);
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture);
-static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture);
+static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+                           vlc_tick_t date);
+static void PictureDisplay (vout_display_t *vd, picture_t *pic);
 static int Control (vout_display_t *vd, int query, va_list ap);
 
 static void *OurGetProcAddress(vlc_gl_t *, const char *);
@@ -150,9 +151,7 @@ static int Open (vlc_object_t *this)
 
         /* Get the drawable object */
         id container = var_CreateGetAddress (vd, "drawable-nsobject");
-        if (container)
-            vout_display_DeleteWindow (vd, NULL);
-        else {
+        if (!container) {
             sys->embed = vout_display_NewWindow (vd, VOUT_WINDOW_TYPE_NSOBJECT);
             if (sys->embed)
                 container = sys->embed->handle.nsobject;
@@ -299,8 +298,6 @@ void Close (vlc_object_t *this)
 
         [sys->glView release];
 
-        if (sys->embed)
-            vout_display_DeleteWindow (vd, sys->embed);
         free (sys);
     }
 }
@@ -321,9 +318,10 @@ static picture_pool_t *Pool (vout_display_t *vd, unsigned requested_count)
     return sys->pool;
 }
 
-static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture,
+                           vlc_tick_t date)
 {
-
+    VLC_UNUSED(date);
     vout_display_sys_t *sys = vd->sys;
 
     if (vlc_gl_MakeCurrent(sys->gl) == VLC_SUCCESS)
@@ -333,9 +331,10 @@ static void PictureRender (vout_display_t *vd, picture_t *pic, subpicture_t *sub
     }
 }
 
-static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *subpicture)
+static void PictureDisplay (vout_display_t *vd, picture_t *pic)
 {
     vout_display_sys_t *sys = vd->sys;
+    VLC_UNUSED(pic);
     [sys->glView setVoutFlushing:YES];
     if (vlc_gl_MakeCurrent(sys->gl) == VLC_SUCCESS)
     {
@@ -343,11 +342,7 @@ static void PictureDisplay (vout_display_t *vd, picture_t *pic, subpicture_t *su
         vlc_gl_ReleaseCurrent(sys->gl);
     }
     [sys->glView setVoutFlushing:NO];
-    picture_Release (pic);
     sys->has_first_frame = true;
-
-    if (subpicture)
-        subpicture_Delete(subpicture);
 }
 
 static int Control (vout_display_t *vd, int query, va_list ap)
@@ -377,10 +372,6 @@ static int Control (vout_display_t *vd, int query, va_list ap)
                 /* we always use our current frame here, because we have some size constraints
                  in the ui vout provider */
                 vout_display_cfg_t cfg_tmp = *cfg;
-                /* on HiDPI displays, the point bounds don't equal the actual pixel based bounds */
-                NSRect bounds = [sys->glView convertRectToBacking:[sys->glView bounds]];
-                cfg_tmp.display.width = bounds.size.width;
-                cfg_tmp.display.height = bounds.size.height;
 
                 /* Reverse vertical alignment as the GL tex are Y inverted */
                 if (cfg_tmp.align.vertical == VOUT_DISPLAY_ALIGN_TOP)

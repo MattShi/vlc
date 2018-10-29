@@ -96,8 +96,8 @@
 static int  Open (vlc_object_t *);
 static void Close(vlc_object_t *);
 
-static int FindDevicesCallback(vlc_object_t *, const char *,
-                               char ***, char ***);
+static int FindDevicesCallback(const char *, char ***, char ***);
+
 vlc_module_begin()
     set_shortname("DirectDraw")
     set_description(N_("DirectX (DirectDraw) video output"))
@@ -123,11 +123,12 @@ vlc_module_end()
  * Local prototypes.
  *****************************************************************************/
 
-struct picture_sys_t {
+typedef struct
+{
     LPDIRECTDRAWSURFACE2 surface;
     LPDIRECTDRAWSURFACE2 front_surface;
     picture_t            *fallback;
-};
+} picture_sys_t;
 
 struct vout_display_sys_t
 {
@@ -162,19 +163,8 @@ struct vout_display_sys_t
     bool           wallpaper_requested;
 };
 
-/*****************************************************************************
- * DirectDraw GUIDs.
- * Defining them here allows us to get rid of the dxguid library during
- * the linking stage.
- *****************************************************************************/
-#include <initguid.h>
-#undef GUID_EXT
-#define GUID_EXT
-DEFINE_GUID(IID_IDirectDraw2, 0xB3A6F3E0,0x2B43,0x11CF,0xA2,0xDE,0x00,0xAA,0x00,0xB9,0x33,0x56);
-DEFINE_GUID(IID_IDirectDrawSurface2, 0x57805885,0x6eec,0x11cf,0x94,0x41,0xa8,0x23,0x03,0xc1,0x0e,0x27);
-
 static picture_pool_t *Pool  (vout_display_t *, unsigned);
-static void           Display(vout_display_t *, picture_t *, subpicture_t *);
+static void           Display(vout_display_t *, picture_t *);
 static int            Control(vout_display_t *, int, va_list);
 static void           Manage (vout_display_t *);
 
@@ -198,9 +188,6 @@ static int Open(vlc_object_t *object)
 {
     vout_display_t *vd = (vout_display_t *)object;
     vout_display_sys_t *sys;
-
-    if ( !vd->obj.force && vd->source.projection_mode != PROJECTION_MODE_RECTANGULAR)
-        return VLC_EGENERIC; /* let a module who can handle it do it */
 
     /* Allocate structure */
     vd->sys = sys = calloc(1, sizeof(*sys));
@@ -244,9 +231,7 @@ static int Open(vlc_object_t *object)
     sys->wallpaper_requested = sys->use_wallpaper;
     sys->use_wallpaper = false;
 
-    vlc_value_t val;
-    val.psz_string = _("Wallpaper");
-    var_Change(vd, "video-wallpaper", VLC_VAR_SETTEXT, &val, NULL);
+    var_Change(vd, "video-wallpaper", VLC_VAR_SETTEXT, _("Wallpaper"));
     var_AddCallback(vd, "video-wallpaper", WallpaperCallback, NULL);
 
     /* Setup vout_display now that everything is fine */
@@ -258,7 +243,6 @@ static int Open(vlc_object_t *object)
     vd->prepare = NULL;
     vd->display = Display;
     vd->control = Control;
-    vd->manage  = Manage;
     return VLC_SUCCESS;
 
 error:
@@ -297,9 +281,10 @@ static picture_pool_t *Pool(vout_display_t *vd, unsigned count)
     VLC_UNUSED(count);
     return vd->sys->sys.pool;
 }
-static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpicture)
+static void Display(vout_display_t *vd, picture_t *picture)
 {
     vout_display_sys_t *sys = vd->sys;
+    picture_sys_t *p_sys = picture->p_sys;
 
     assert(sys->display);
 
@@ -319,8 +304,8 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
 
     if (sys->sys.use_overlay) {
         /* Flip the overlay buffers if we are using back buffers */
-        if (picture->p_sys->surface != picture->p_sys->front_surface) {
-            HRESULT hr = IDirectDrawSurface2_Flip(picture->p_sys->front_surface,
+        if (p_sys->surface != p_sys->front_surface) {
+            HRESULT hr = IDirectDrawSurface2_Flip(p_sys->front_surface,
                                                   NULL, DDFLIP_WAIT);
             if (hr != DD_OK)
                 msg_Warn(vd, "could not flip overlay (error %li)", hr);
@@ -334,7 +319,7 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
 
         HRESULT hr = IDirectDrawSurface2_Blt(sys->display,
                                              &sys->sys.rect_dest_clipped,
-                                             picture->p_sys->surface,
+                                             p_sys->surface,
                                              &sys->sys.rect_src_clipped,
                                              DDBLT_ASYNC, &ddbltfx);
         if (hr != DD_OK)
@@ -353,8 +338,7 @@ static void Display(vout_display_t *vd, picture_t *picture, subpicture_t *subpic
     }
     CommonDisplay(vd);
 
-    picture_Release(picture);
-    VLC_UNUSED(subpicture);
+    Manage(vd);
 }
 static int Control(vout_display_t *vd, int query, va_list args)
 {
@@ -1273,18 +1257,20 @@ static void DirectXDestroyPictureResource(vout_display_t *vd)
 
 static int DirectXLock(picture_t *picture)
 {
+    picture_sys_t *p_sys = picture->p_sys;
     DDSURFACEDESC ddsd;
-    if (DirectXLockSurface(picture->p_sys->front_surface,
-                           picture->p_sys->surface, &ddsd))
-        return CommonUpdatePicture(picture, &picture->p_sys->fallback, NULL, 0);
+    if (DirectXLockSurface(p_sys->front_surface,
+                           p_sys->surface, &ddsd))
+        return CommonUpdatePicture(picture, &p_sys->fallback, NULL, 0);
 
     CommonUpdatePicture(picture, NULL, ddsd.lpSurface, ddsd.lPitch);
     return VLC_SUCCESS;
 }
 static void DirectXUnlock(picture_t *picture)
 {
-    DirectXUnlockSurface(picture->p_sys->front_surface,
-                         picture->p_sys->surface);
+    picture_sys_t *p_sys = picture->p_sys;
+    DirectXUnlockSurface(p_sys->front_surface,
+                         p_sys->surface);
 }
 
 static int DirectXCreatePool(vout_display_t *vd,
@@ -1484,8 +1470,7 @@ static BOOL WINAPI DirectXEnumCallback2(GUID *guid, LPSTR desc,
     return TRUE; /* Keep enumerating */
 }
 
-static int FindDevicesCallback(vlc_object_t *object, const char *name,
-                               char ***values, char ***descs)
+static int FindDevicesCallback(const char *name, char ***values, char ***descs)
 {
     enum_context_t ctx;
 
@@ -1509,7 +1494,6 @@ static int FindDevicesCallback(vlc_object_t *object, const char *name,
         FreeLibrary(hddraw_dll);
     }
 
-    VLC_UNUSED(object);
     VLC_UNUSED(name);
 
     *values = ctx.values;

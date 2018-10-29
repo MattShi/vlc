@@ -91,7 +91,7 @@ SoundWidget::SoundWidget( QWidget *_parent, intf_thread_t * _p_intf,
     if( b_shiny )
     {
         volumeSlider = new SoundSlider( this,
-            config_GetFloat( p_intf, "volume-step" ),
+            config_GetFloat( "volume-step" ),
             var_InheritString( p_intf, "qt-slider-colours" ),
             var_InheritInteger( p_intf, "qt-max-volume") );
     }
@@ -123,6 +123,8 @@ SoundWidget::SoundWidget( QWidget *_parent, intf_thread_t * _p_intf,
     CONNECT( this, valueReallyChanged( int ), this, userUpdateVolume( int ) );
     CONNECT( THEMIM, volumeChanged( float ), this, libUpdateVolume( float ) );
     CONNECT( THEMIM, soundMuteChanged( bool ), this, updateMuteStatus( bool ) );
+
+    setAccessibleName( qtr( "Volume slider" ) );
 }
 
 void SoundWidget::refreshLabels()
@@ -266,7 +268,10 @@ void AspectRatioComboBox::updateRatios()
 {
     /* Clear the list before updating */
     clear();
-    vlc_value_t val_list, text_list;
+    vlc_value_t *val_list;
+    char **text_list;
+    size_t count;
+
     vout_thread_t* p_vout = THEMIM->getVout();
 
     /* Disable if there is no vout */
@@ -277,12 +282,18 @@ void AspectRatioComboBox::updateRatios()
         return;
     }
 
-    var_Change( p_vout, "aspect-ratio", VLC_VAR_GETCHOICES, &val_list, &text_list );
-    for( int i = 0; i < val_list.p_list->i_count; i++ )
-        addItem( qfu( text_list.p_list->p_values[i].psz_string ),
-                 QString( val_list.p_list->p_values[i].psz_string ) );
+    var_Change( p_vout, "aspect-ratio", VLC_VAR_GETCHOICES,
+                &count, &val_list, &text_list );
+    for( size_t i = 0; i < count; i++ )
+    {
+        addItem( qfu( text_list[i] ),
+                 QString( val_list[i].psz_string ) );
+        free(text_list[i]);
+        free(val_list[i].psz_string);
+    }
     setEnabled( true );
-    var_FreeList( &val_list, &text_list );
+    free(text_list);
+    free(val_list);
     vlc_object_release( p_vout );
 }
 

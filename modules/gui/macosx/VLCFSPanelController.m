@@ -28,6 +28,7 @@
 #import "VLCCoreInteraction.h"
 #import "CompatibilityFixes.h"
 #import "VLCMain.h"
+#import <vlc_aout.h>
 
 @interface VLCFSPanelController () {
     BOOL _isCounting;
@@ -86,12 +87,10 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
     [self setupControls];
 }
 
-#define setupButton(target, title, desc)                                              \
-    [target accessibilitySetOverrideValue:title                                       \
-                             forAttribute:NSAccessibilityTitleAttribute];             \
-    [target accessibilitySetOverrideValue:desc                                        \
-                             forAttribute:NSAccessibilityDescriptionAttribute];       \
-    [target setToolTip:desc];
+#define setupButton(target, title, desc)            \
+    target.accessibilityTitle = title;              \
+    target.accessibilityLabel = desc;               \
+    [target setToolTip:title];
 
 - (void)setupControls
 {
@@ -112,8 +111,8 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
                 _NS("Backward"),
                 _NS("Seek backward"));
     setupButton(_fullscreenButton,
-                _NS("Toggle Fullscreen mode"),
-                _NS("Leave fullscreen mode"));
+                _NS("Leave fullscreen"),
+                _NS("Leave fullscreen"));
     setupButton(_volumeSlider,
                 _NS("Volume"),
                 _NS("Adjust the volume"));
@@ -125,6 +124,12 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
     [_volumeSlider setMaxValue:[[VLCCoreInteraction sharedInstance] maxVolume]];
     [_volumeSlider setIntValue:AOUT_VOLUME_DEFAULT];
     [_volumeSlider setDefaultValue:AOUT_VOLUME_DEFAULT];
+
+    /* Identifier to store the state of the remaining or total time label,
+     * this is the same identifier as used for the window playback cotrols
+     * so the state is shared between those.
+     */
+    [_remainingOrTotalTime setRemainingIdentifier:@"DisplayTimeAsTimeRemaining"];
 }
 
 #undef setupButton
@@ -214,11 +219,13 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
 - (void)setPlay
 {
     [_playPauseButton setState:NSOffState];
+    [_playPauseButton setToolTip: _NS("Play")];
 }
 
 - (void)setPause
 {
     [_playPauseButton setState:NSOnState];
+    [_playPauseButton setToolTip: _NS("Pause")];
 }
 
 - (void)setStreamTitle:(NSString *)title
@@ -246,8 +253,8 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
     [_timeSlider setFloatValue:f_updated];
 
 
-    int64_t t = var_GetInteger(p_input, "time");
-    mtime_t dur = input_item_GetDuration(input_GetItem(p_input));
+    vlc_tick_t t = var_GetInteger(p_input, "time");
+    vlc_tick_t dur = input_item_GetDuration(input_GetItem(p_input));
 
     /* Update total duration (right field) */
     if (dur <= 0) {
@@ -258,18 +265,18 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
         NSString *totalTime;
 
         if ([_remainingOrTotalTime timeRemaining]) {
-            mtime_t remaining = 0;
+            vlc_tick_t remaining = 0;
             if (dur > t)
                 remaining = dur - t;
-            totalTime = [NSString stringWithFormat:@"-%s", secstotimestr(psz_time, (remaining / 1000000))];
+            totalTime = [NSString stringWithFormat:@"-%s", secstotimestr(psz_time, (int)SEC_FROM_VLC_TICK(remaining))];
         } else {
-            totalTime = toNSStr(secstotimestr(psz_time, (dur / 1000000)));
+            totalTime = toNSStr(secstotimestr(psz_time, (int)SEC_FROM_VLC_TICK(dur)));
         }
         [_remainingOrTotalTime setStringValue:totalTime];
     }
 
     /* Update current position (left field) */
-    NSString *playbackPosition = toNSStr(secstotimestr(psz_time, t / CLOCK_FREQ));
+    NSString *playbackPosition = toNSStr(secstotimestr(psz_time, (int)SEC_FROM_VLC_TICK(t)));
 
     [_elapsedTime setStringValue:playbackPosition];
     vlc_object_release(p_input);
@@ -285,6 +292,7 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
 - (void)setVolumeLevel:(int)value
 {
     [_volumeSlider setIntValue:value];
+    [_volumeSlider setToolTip: [NSString stringWithFormat:_NS("Volume: %i %%"), (value*200)/AOUT_VOLUME_MAX]];
 }
 
 #pragma mark -
@@ -391,7 +399,7 @@ static NSString *kAssociatedFullscreenRect = @"VLCFullscreenAssociatedWindowRect
         return;
 
     /* Get timeout and make sure it is not lower than 1 second */
-    int _timeToKeepVisibleInSec = MAX(var_CreateGetInteger(getIntf(), "mouse-hide-timeout") / 1000, 1);
+    long long _timeToKeepVisibleInSec = MAX(var_CreateGetInteger(getIntf(), "mouse-hide-timeout") / 1000, 1);
 
     _hideTimer = [NSTimer scheduledTimerWithTimeInterval:_timeToKeepVisibleInSec
                                                   target:self

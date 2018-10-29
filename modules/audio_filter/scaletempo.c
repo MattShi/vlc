@@ -95,7 +95,7 @@ vlc_module_end ()
  * frame: a single set of samples, one for each channel
  * VLC uses these terms differently
  */
-struct filter_sys_t
+typedef struct
 {
     /* Filter static config */
     double    scale;
@@ -135,7 +135,7 @@ struct filter_sys_t
     filter_t * resampler;
     vlc_atomic_float rate_shift;
 #endif
-};
+} filter_sys_t;
 
 /*****************************************************************************
  * best_overlap_offset: calculate best offset for overlap
@@ -484,12 +484,13 @@ static filter_t *ResamplerCreate(filter_t *p_filter)
     if( unlikely( p_resampler == NULL ) )
         return NULL;
 
+    filter_sys_t *p_sys = p_filter->p_sys;
     p_resampler->owner.sys = NULL;
     p_resampler->p_cfg = NULL;
     p_resampler->fmt_in = p_filter->fmt_in;
     p_resampler->fmt_out = p_filter->fmt_in;
     p_resampler->fmt_out.audio.i_rate =
-        vlc_atomic_load_float( &p_filter->p_sys->rate_shift );
+        vlc_atomic_load_float( &p_sys->rate_shift );
     aout_FormatPrepare( &p_resampler->fmt_out.audio );
     p_resampler->p_module = module_need( p_resampler, "audio resampler", NULL,
                                          false );
@@ -578,7 +579,10 @@ static block_t *DoWork( filter_t * p_filter, block_t * p_in_buf )
     size_t i_outsize = calculate_output_buffer_size ( p_filter, p_in_buf->i_buffer );
     block_t *p_out_buf = block_Alloc( i_outsize );
     if( p_out_buf == NULL )
+    {
+        block_Release( p_in_buf );
         return NULL;
+    }
 
     size_t bytes_out = transform_buffer( p_filter,
         p_in_buf->p_buffer, p_in_buf->i_buffer,

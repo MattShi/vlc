@@ -148,11 +148,13 @@ vlc_module_begin ()
     set_subcategory( SUBCAT_VIDEO_SUBPIC )
 
 #ifdef HAVE_GET_FONT_BY_FAMILY_NAME
-    add_font( "freetype-font", DEFAULT_FAMILY, FONT_TEXT, FAMILY_LONGTEXT, false )
-    add_font( "freetype-monofont", DEFAULT_MONOSPACE_FAMILY, MONOSPACE_FONT_TEXT, FAMILY_LONGTEXT, false )
+    add_font("freetype-font", DEFAULT_FAMILY, FONT_TEXT, FAMILY_LONGTEXT)
+    add_font("freetype-monofont", DEFAULT_MONOSPACE_FAMILY,
+             MONOSPACE_FONT_TEXT, FAMILY_LONGTEXT)
 #else
-    add_loadfile( "freetype-font", DEFAULT_FONT_FILE, FONT_TEXT, FONT_LONGTEXT, false )
-    add_loadfile( "freetype-monofont", DEFAULT_MONOSPACE_FONT_FILE, MONOSPACE_FONT_TEXT, FONT_LONGTEXT, false )
+    add_loadfile("freetype-font", DEFAULT_FONT_FILE, FONT_TEXT, FONT_LONGTEXT)
+    add_loadfile("freetype-monofont", DEFAULT_MONOSPACE_FONT_FILE,
+                 MONOSPACE_FONT_TEXT, FONT_LONGTEXT)
 #endif
 
     /* opacity valid on 0..255, with default 255 = fully opaque */
@@ -161,8 +163,7 @@ vlc_module_begin ()
         change_safe()
 
     /* hook to the color values list, with default 0x00ffffff = white */
-    add_rgb( "freetype-color", 0x00FFFFFF, COLOR_TEXT,
-                 COLOR_LONGTEXT, false )
+    add_rgb("freetype-color", 0x00FFFFFF, COLOR_TEXT, COLOR_LONGTEXT)
         change_integer_list( pi_color_values, ppsz_color_descriptions )
         change_integer_range( 0x000000, 0xFFFFFF )
         change_safe()
@@ -173,8 +174,7 @@ vlc_module_begin ()
     add_integer_with_range( "freetype-background-opacity", 0, 0, 255,
                             BG_OPACITY_TEXT, NULL, false )
         change_safe()
-    add_rgb( "freetype-background-color", 0x00000000, BG_COLOR_TEXT,
-             NULL, false )
+    add_rgb("freetype-background-color", 0x00000000, BG_COLOR_TEXT, NULL)
         change_integer_list( pi_color_values, ppsz_color_descriptions )
         change_integer_range( 0x000000, 0xFFFFFF )
         change_safe()
@@ -182,8 +182,7 @@ vlc_module_begin ()
     add_integer_with_range( "freetype-outline-opacity", 255, 0, 255,
                             OUTLINE_OPACITY_TEXT, NULL, false )
         change_safe()
-    add_rgb( "freetype-outline-color", 0x00000000, OUTLINE_COLOR_TEXT,
-             NULL, false )
+    add_rgb("freetype-outline-color", 0x00000000, OUTLINE_COLOR_TEXT, NULL)
         change_integer_list( pi_color_values, ppsz_color_descriptions )
         change_integer_range( 0x000000, 0xFFFFFF )
         change_safe()
@@ -195,8 +194,7 @@ vlc_module_begin ()
     add_integer_with_range( "freetype-shadow-opacity", 128, 0, 255,
                             SHADOW_OPACITY_TEXT, NULL, false )
         change_safe()
-    add_rgb( "freetype-shadow-color", 0x00000000, SHADOW_COLOR_TEXT,
-             NULL, false )
+    add_rgb("freetype-shadow-color", 0x00000000, SHADOW_COLOR_TEXT, NULL)
         change_integer_list( pi_color_values, ppsz_color_descriptions )
         change_integer_range( 0x000000, 0xFFFFFF )
         change_safe()
@@ -432,6 +430,10 @@ static int RenderYUVP( filter_t *p_filter, subpicture_region_t *p_region,
     const unsigned regionnum = p_region->fmt.i_sar_num;
     const unsigned regionden = p_region->fmt.i_sar_den;
     fmt.i_sar_num = fmt.i_sar_den = 1;
+    fmt.transfer  = p_region->fmt.transfer;
+    fmt.primaries = p_region->fmt.primaries;
+    fmt.space     = p_region->fmt.space;
+    fmt.mastering = p_region->fmt.mastering;
 
     assert( !p_region->p_picture );
     p_region->p_picture = picture_NewFromFormat( &fmt );
@@ -889,10 +891,13 @@ static inline int RenderAXYZ( filter_t *p_filter,
                               FT_BBox *p_paddedtextbbox,
                               FT_BBox *p_textbbox,
                               vlc_fourcc_t i_chroma,
+                              const video_format_t *fmt_out,
                               void (*ExtractComponents)( uint32_t, uint8_t *, uint8_t *, uint8_t * ),
                               void (*FillPicture)( picture_t *p_picture, int, int, int, int ),
                               void (*BlendPixel)(picture_t *, int, int, int, int, int, int, int) )
 {
+    filter_sys_t *p_sys = p_filter->p_sys;
+
     /* Create a new subpicture region */
     video_format_t fmt;
     video_format_Init( &fmt, i_chroma );
@@ -903,6 +908,10 @@ static inline int RenderAXYZ( filter_t *p_filter,
     const unsigned regionnum = p_region->fmt.i_sar_num;
     const unsigned regionden = p_region->fmt.i_sar_den;
     fmt.i_sar_num = fmt.i_sar_den = 1;
+    fmt.transfer  = fmt_out->transfer;
+    fmt.primaries = fmt_out->primaries;
+    fmt.space     = fmt_out->space;
+    fmt.mastering = fmt_out->mastering;
 
     picture_t *p_picture = p_region->p_picture = picture_NewFromFormat( &fmt );
     if( !p_region->p_picture )
@@ -913,7 +922,7 @@ static inline int RenderAXYZ( filter_t *p_filter,
     p_region->fmt.i_sar_den = regionden;
 
     /* Initialize the picture background */
-    const text_style_t *p_style = p_filter->p_sys->p_default_style;
+    const text_style_t *p_style = p_sys->p_default_style;
     uint8_t i_x, i_y, i_z;
 
     if (p_region->b_noregionbg) {
@@ -952,7 +961,8 @@ static inline int RenderAXYZ( filter_t *p_filter,
 
 static void UpdateDefaultLiveStyles( filter_t *p_filter )
 {
-    text_style_t *p_style = p_filter->p_sys->p_default_style;
+    filter_sys_t *p_sys = p_filter->p_sys;
+    text_style_t *p_style = p_sys->p_default_style;
 
     p_style->i_font_color = var_InheritInteger( p_filter, "freetype-color" );
 
@@ -1229,13 +1239,6 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
     else if( p_region_in->i_y > 0 && (unsigned)p_region_in->i_y < i_max_height )
         i_max_height -= p_region_in->i_y;
 
-    uint8_t i_background_opacity = var_InheritInteger( p_filter, "freetype-background-opacity" );
-    i_background_opacity = VLC_CLIP( i_background_opacity, 0, 255 );
-    int i_margin = (i_background_opacity > 0 && !p_region_in->b_gridmode) ? i_max_face_height / 4 : 0;
-
-    if( (unsigned)i_margin * 2 >= i_max_width || (unsigned)i_margin * 2 >= i_max_height )
-        i_margin = 0;
-
     text_block.i_max_width = i_max_width;
     text_block.i_max_height = i_max_height;
     rv = LayoutTextBlock( p_filter, &text_block, &text_block.p_laid, &bbox, &i_max_face_height );
@@ -1246,6 +1249,13 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
     {
         const vlc_fourcc_t p_chroma_list_yuvp[] = { VLC_CODEC_YUVP, 0 };
         const vlc_fourcc_t p_chroma_list_rgba[] = { VLC_CODEC_RGBA, 0 };
+
+        uint8_t i_background_opacity = var_InheritInteger( p_filter, "freetype-background-opacity" );
+        i_background_opacity = VLC_CLIP( i_background_opacity, 0, 255 );
+        int i_margin = (i_background_opacity > 0 && !p_region_in->b_gridmode) ? i_max_face_height / 4 : 0;
+
+        if( (unsigned)i_margin * 2 >= i_max_width || (unsigned)i_margin * 2 >= i_max_height )
+            i_margin = 0;
 
         if( var_InheritBool( p_filter, "freetype-yuvp" ) )
             p_chroma_list = p_chroma_list_yuvp;
@@ -1333,6 +1343,7 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
                 rv = RenderAXYZ( p_filter, p_region_out, text_block.p_laid,
                                  &regionbbox, &paddedbbox, &bbox,
                                  VLC_CODEC_YUVA,
+                                 &p_region_out->fmt,
                                  YUVFromRGB,
                                  FillYUVAPicture,
                                  BlendYUVAPixel );
@@ -1340,6 +1351,7 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
                 rv = RenderAXYZ( p_filter, p_region_out, text_block.p_laid,
                                  &regionbbox, &paddedbbox, &bbox,
                                  VLC_CODEC_RGBA,
+                                 &p_region_out->fmt,
                                  RGBFromRGB,
                                  FillRGBAPicture,
                                  BlendRGBAPixel );
@@ -1347,6 +1359,7 @@ static int Render( filter_t *p_filter, subpicture_region_t *p_region_out,
                 rv = RenderAXYZ( p_filter, p_region_out, text_block.p_laid,
                                  &regionbbox, &paddedbbox, &bbox,
                                  VLC_CODEC_ARGB,
+                                 &p_region_out->fmt,
                                  RGBFromRGB,
                                  FillARGBPicture,
                                  BlendARGBPixel );

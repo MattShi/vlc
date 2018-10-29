@@ -233,7 +233,7 @@ void FileOpenPanel::browseFile()
             );
         item->setFlags( Qt::ItemIsEnabled );
         ui.fileListWidg->addItem( item );
-        savedirpathFromFile( file );
+        p_intf->p_sys->filepath = url;
     }
     updateButtons();
     updateMRL();
@@ -287,7 +287,7 @@ void FileOpenPanel::updateMRL()
 
     /* Options */
     if( ui.subGroupBox->isChecked() &&  !subUrl.isEmpty() ) {
-        mrl.append( " :sub-file=" + colon_escape( subUrl.toEncoded() ) );
+        mrl.append( " :sub-file=" + colon_escape( toNativeSeparators( subUrl.toLocalFile() ) ) );
     }
 
     emit methodChanged( "file-caching" );
@@ -350,7 +350,7 @@ DiscOpenPanel::DiscOpenPanel( QWidget *_parent, intf_thread_t *_p_intf ) :
     };
     QComboBox *discCombo = ui.deviceCombo; /* avoid namespacing in macro */
     POPULATE_WITH_DEVS( ppsz_discdevices, discCombo );
-    char *psz_config = config_GetPsz( p_intf, "dvd" );
+    char *psz_config = config_GetPsz( "dvd" );
     int temp = ui.deviceCombo->findData( psz_config, Qt::UserRole, Qt::MatchStartsWith );
     free( psz_config );
     if( temp != -1 )
@@ -415,7 +415,7 @@ void DiscOpenPanel::onFocus()
         SetThreadErrorMode(oldMode, NULL);
     }
 
-    char *psz_config = config_GetPsz( p_intf, "dvd" );
+    char *psz_config = config_GetPsz( "dvd" );
     int temp = ui.deviceCombo->findData( psz_config, Qt::UserRole, Qt::MatchStartsWith );
     free( psz_config );
     if( temp != -1 )
@@ -634,8 +634,10 @@ void DiscOpenPanel::updateMRL()
 
 void DiscOpenPanel::browseDevice()
 {
-    QString dir = QFileDialog::getExistingDirectory( this,
-            qtr( I_DEVICE_TOOLTIP ), p_intf->p_sys->filepath );
+    const QStringList schemes = QStringList(QStringLiteral("file"));
+    QString dir = QFileDialog::getExistingDirectoryUrl( this,
+            qtr( I_DEVICE_TOOLTIP ), p_intf->p_sys->filepath,
+            QFileDialog::ShowDirsOnly, schemes ).toLocalFile();
     if( !dir.isEmpty() )
     {
         ui.deviceCombo->addItem( toNativeSepNoSlash( dir ) );
@@ -718,7 +720,7 @@ void NetOpenPanel::onFocus()
 
 void NetOpenPanel::updateMRL()
 {
-    QString url = ui.urlComboBox->lineEdit()->text();
+    QString url = ui.urlComboBox->lineEdit()->text().trimmed();
 
     emit methodChanged( qfu( "network-caching" ) );
 

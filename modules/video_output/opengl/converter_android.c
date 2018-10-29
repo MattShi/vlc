@@ -26,7 +26,6 @@
 # error this file must be built from android
 #endif
 
-#include <GLES2/gl2ext.h>
 #include "converter.h"
 #include "../android/display.h"
 #include "../android/utils.h"
@@ -55,11 +54,8 @@ static void
 pool_unlock_pic(picture_t *p_pic)
 {
     picture_sys_t *p_picsys = p_pic->p_sys;
-    if (p_picsys->b_locked)
-    {
-        AndroidOpaquePicture_Release(p_picsys, false);
-        p_picsys->b_locked  = false;
-    }
+
+    AndroidOpaquePicture_Release(p_picsys, false);
 }
 
 static int
@@ -134,13 +130,14 @@ tc_anop_update(const opengl_tex_converter_t *tc, GLuint *textures,
                const GLsizei *tex_width, const GLsizei *tex_height,
                picture_t *pic, const size_t *plane_offset)
 {
+    picture_sys_t *p_sys = pic->p_sys;
     (void) tex_width; (void) tex_height; (void) plane_offset;
     assert(textures[0] != 0);
 
     if (plane_offset != NULL)
         return VLC_EGENERIC;
 
-    if (!pic->p_sys->b_locked)
+    if (!p_sys->b_locked)
         return VLC_SUCCESS;
 
     struct priv *priv = tc->priv;
@@ -261,12 +258,15 @@ Open(vlc_object_t *obj)
         "uniform mat4 uSTMatrix;"
         "void main()"
         "{ "
-        "  gl_FragColor = texture2D(sTexture, (uSTMatrix * vec4(TexCoord0, 1, 1)).xy);"
+        "  gl_FragColor = texture2D(sTexture, (uSTMatrix * vec4(TexCoord0, 1, 1)).xy).rgba;"
         "}";
 
     char *code;
     if (asprintf(&code, template, tc->glsl_version, tc->glsl_precision_header) < 0)
-        return 0;
+    {
+        free(tc->priv);
+        return VLC_EGENERIC;
+    }
     GLuint fragment_shader = tc->vt->CreateShader(GL_FRAGMENT_SHADER);
     tc->vt->ShaderSource(fragment_shader, 1, (const char **) &code, NULL);
     tc->vt->CompileShader(fragment_shader);

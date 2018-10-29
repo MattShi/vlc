@@ -172,42 +172,23 @@ libvlc_video_take_snapshot( libvlc_media_player_t *p_mi, unsigned num,
 int libvlc_video_get_size( libvlc_media_player_t *p_mi, unsigned num,
                            unsigned *restrict px, unsigned *restrict py )
 {
-    libvlc_media_track_info_t *info;
-    int ret = -1;
-    if (!p_mi->p_md)
-        return ret;
-    int infos = libvlc_media_get_tracks_info(p_mi->p_md, &info);
-    if (infos <= 0)
-        return ret;
+    if (p_mi->p_md == NULL)
+        return -1;
 
-    for (int i = 0; i < infos; i++)
-        if (info[i].i_type == libvlc_track_video && num-- == 0) {
-            *px = info[i].u.video.i_width;
-            *py = info[i].u.video.i_height;
+    libvlc_media_track_t **tracks;
+    unsigned count = libvlc_media_tracks_get(p_mi->p_md, &tracks);
+    int ret = -1;
+
+    for (unsigned i = 0; i < count; i++)
+        if (tracks[i]->i_type == libvlc_track_video && num-- == 0) {
+            *px = tracks[i]->video->i_width;
+            *py = tracks[i]->video->i_height;
             ret = 0;
             break;
         }
 
-    free(info);
+    libvlc_media_tracks_release(tracks, count);
     return ret;
-}
-
-int libvlc_video_get_height( libvlc_media_player_t *p_mi )
-{
-    unsigned width, height;
-
-    if (libvlc_video_get_size (p_mi, 0, &width, &height))
-        return 0;
-    return height;
-}
-
-int libvlc_video_get_width( libvlc_media_player_t *p_mi )
-{
-    unsigned width, height;
-
-    if (libvlc_video_get_size (p_mi, 0, &width, &height))
-        return 0;
-    return width;
 }
 
 int libvlc_video_get_cursor( libvlc_media_player_t *mp, unsigned num,
@@ -371,16 +352,18 @@ libvlc_track_description_t *
 int libvlc_video_set_spu( libvlc_media_player_t *p_mi, int i_spu )
 {
     input_thread_t *p_input_thread = libvlc_get_input_thread( p_mi );
-    vlc_value_t list;
+    vlc_value_t *list;
+    size_t count;
     int i_ret = -1;
 
     if( !p_input_thread )
         return -1;
 
-    var_Change (p_input_thread, "spu-es", VLC_VAR_GETCHOICES, &list, NULL);
-    for (int i = 0; i < list.p_list->i_count; i++)
+    var_Change(p_input_thread, "spu-es", VLC_VAR_GETCHOICES,
+               &count, &list, (char ***)NULL);
+    for (size_t i = 0; i < count; i++)
     {
-        if( i_spu == list.p_list->p_values[i].i_int )
+        if( i_spu == list[i].i_int )
         {
             if( var_SetInteger( p_input_thread, "spu-es", i_spu ) < 0 )
                 break;
@@ -391,29 +374,8 @@ int libvlc_video_set_spu( libvlc_media_player_t *p_mi, int i_spu )
     libvlc_printerr( "Track identifier not found" );
 end:
     vlc_object_release (p_input_thread);
-    var_FreeList (&list, NULL);
+    free(list);
     return i_ret;
-}
-
-int libvlc_video_set_subtitle_file( libvlc_media_player_t *p_mi,
-                                    const char *psz_subtitle )
-{
-    input_thread_t *p_input_thread = libvlc_get_input_thread ( p_mi );
-    bool b_ret = false;
-
-    if( p_input_thread )
-    {
-        char* psz_mrl = vlc_path2uri( psz_subtitle, NULL );
-        if( psz_mrl )
-        {
-            if( !input_AddSlave( p_input_thread, SLAVE_TYPE_SPU, psz_mrl,
-                                 true, false, false ) )
-                b_ret = true;
-            free( psz_mrl );
-        }
-        vlc_object_release( p_input_thread );
-    }
-    return b_ret;
 }
 
 int64_t libvlc_video_get_spu_delay( libvlc_media_player_t *p_mi )
@@ -423,7 +385,7 @@ int64_t libvlc_video_get_spu_delay( libvlc_media_player_t *p_mi )
 
     if( p_input_thread )
     {
-        val = var_GetInteger( p_input_thread, "spu-delay" );
+        val = US_FROM_VLC_TICK( var_GetInteger( p_input_thread, "spu-delay" ) );
         vlc_object_release( p_input_thread );
     }
     else
@@ -442,7 +404,7 @@ int libvlc_video_set_spu_delay( libvlc_media_player_t *p_mi,
 
     if( p_input_thread )
     {
-        var_SetInteger( p_input_thread, "spu-delay", i_delay );
+        var_SetInteger( p_input_thread, "spu-delay", VLC_TICK_FROM_US( i_delay ) );
         vlc_object_release( p_input_thread );
         ret = 0;
     }
@@ -452,21 +414,6 @@ int libvlc_video_set_spu_delay( libvlc_media_player_t *p_mi,
     }
 
     return ret;
-}
-
-libvlc_track_description_t *
-        libvlc_video_get_title_description( libvlc_media_player_t *p_mi )
-{
-    return libvlc_get_track_description( p_mi, "title" );
-}
-
-libvlc_track_description_t *
-        libvlc_video_get_chapter_description( libvlc_media_player_t *p_mi,
-                                              int i_title )
-{
-    char psz_title[sizeof ("title ") + 3 * sizeof (int)];
-    sprintf( psz_title,  "title %2u", i_title );
-    return libvlc_get_track_description( p_mi, psz_title );
 }
 
 char *libvlc_video_get_crop_geometry (libvlc_media_player_t *p_mi)
@@ -504,15 +451,16 @@ static void teletext_enable( input_thread_t *p_input_thread, bool b_enable )
 {
     if( b_enable )
     {
-        vlc_value_t list;
-        if( !var_Change( p_input_thread, "teletext-es", VLC_VAR_GETCHOICES,
-                         &list, NULL ) )
-        {
-            if( list.p_list->i_count > 0 )
-                var_SetInteger( p_input_thread, "spu-es",
-                                list.p_list->p_values[0].i_int );
+        vlc_value_t *list;
+        size_t count;
 
-            var_FreeList( &list, NULL );
+        if( !var_Change( p_input_thread, "teletext-es", VLC_VAR_GETCHOICES,
+                         &count, &list, (char ***)NULL ) )
+        {
+            if( count > 0 )
+                var_SetInteger( p_input_thread, "spu-es", list[0].i_int );
+
+            free(list);
         }
     }
     else
@@ -586,23 +534,6 @@ void libvlc_video_set_teletext( libvlc_media_player_t *p_mi, int i_page )
     vlc_object_release( p_input_thread );
 }
 
-void libvlc_toggle_teletext( libvlc_media_player_t *p_mi )
-{
-    input_thread_t *p_input_thread;
-
-    p_input_thread = libvlc_get_input_thread(p_mi);
-    if( !p_input_thread ) return;
-
-    if( var_CountChoices( p_input_thread, "teletext-es" ) <= 0 )
-    {
-        vlc_object_release( p_input_thread );
-        return;
-    }
-    const bool b_selected = var_GetInteger( p_input_thread, "teletext-es" ) >= 0;
-    teletext_enable( p_input_thread, !b_selected );
-    vlc_object_release( p_input_thread );
-}
-
 int libvlc_video_get_track_count( libvlc_media_player_t *p_mi )
 {
     input_thread_t *p_input_thread = libvlc_get_input_thread( p_mi );
@@ -638,16 +569,18 @@ int libvlc_video_get_track( libvlc_media_player_t *p_mi )
 int libvlc_video_set_track( libvlc_media_player_t *p_mi, int i_track )
 {
     input_thread_t *p_input_thread = libvlc_get_input_thread( p_mi );
-    vlc_value_t val_list;
+    vlc_value_t *val_list;
+    size_t count;
     int i_ret = -1;
 
     if( !p_input_thread )
         return -1;
 
-    var_Change( p_input_thread, "video-es", VLC_VAR_GETCHOICES, &val_list, NULL );
-    for( int i = 0; i < val_list.p_list->i_count; i++ )
+    var_Change( p_input_thread, "video-es", VLC_VAR_GETCHOICES,
+                &count, &val_list, (char ***)NULL );
+    for( size_t i = 0; i < count; i++ )
     {
-        if( i_track == val_list.p_list->p_values[i].i_int )
+        if( i_track == val_list[i].i_int )
         {
             if( var_SetInteger( p_input_thread, "video-es", i_track ) < 0 )
                 break;
@@ -657,34 +590,33 @@ int libvlc_video_set_track( libvlc_media_player_t *p_mi, int i_track )
     }
     libvlc_printerr( "Track identifier not found" );
 end:
-    var_FreeList( &val_list, NULL );
+    free(val_list);
     vlc_object_release( p_input_thread );
     return i_ret;
 }
 
 /******************************************************************************
- * libvlc_video_set_deinterlace : enable deinterlace
+ * libvlc_video_set_deinterlace : enable/disable/auto deinterlace and filter
  *****************************************************************************/
-void libvlc_video_set_deinterlace( libvlc_media_player_t *p_mi,
+void libvlc_video_set_deinterlace( libvlc_media_player_t *p_mi, int deinterlace,
                                    const char *psz_mode )
 {
-    if (psz_mode == NULL)
-        psz_mode = "";
-    if (*psz_mode
+    if (deinterlace != 0 && deinterlace != 1)
+        deinterlace = -1;
+
+    if (psz_mode
      && strcmp (psz_mode, "blend")    && strcmp (psz_mode, "bob")
      && strcmp (psz_mode, "discard")  && strcmp (psz_mode, "linear")
      && strcmp (psz_mode, "mean")     && strcmp (psz_mode, "x")
      && strcmp (psz_mode, "yadif")    && strcmp (psz_mode, "yadif2x")
-     && strcmp (psz_mode, "phosphor") && strcmp (psz_mode, "ivtc"))
+     && strcmp (psz_mode, "phosphor") && strcmp (psz_mode, "ivtc")
+     && strcmp (psz_mode, "auto"))
         return;
 
-    if (*psz_mode)
-    {
+    if (psz_mode && deinterlace != 0)
         var_SetString (p_mi, "deinterlace-mode", psz_mode);
-        var_SetInteger (p_mi, "deinterlace", 1);
-    }
-    else
-        var_SetInteger (p_mi, "deinterlace", 0);
+
+    var_SetInteger (p_mi, "deinterlace", deinterlace);
 
     size_t n;
     vout_thread_t **pp_vouts = GetVouts (p_mi, &n);
@@ -692,13 +624,10 @@ void libvlc_video_set_deinterlace( libvlc_media_player_t *p_mi,
     {
         vout_thread_t *p_vout = pp_vouts[i];
 
-        if (*psz_mode)
-        {
+        if (psz_mode && deinterlace != 0)
             var_SetString (p_vout, "deinterlace-mode", psz_mode);
-            var_SetInteger (p_vout, "deinterlace", 1);
-        }
-        else
-            var_SetInteger (p_vout, "deinterlace", 0);
+
+        var_SetInteger (p_vout, "deinterlace", deinterlace);
         vlc_object_release (p_vout);
     }
     free (pp_vouts);

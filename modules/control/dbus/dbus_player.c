@@ -51,7 +51,7 @@ MarshalPosition( intf_thread_t *p_intf, DBusMessageIter *container )
         i_pos = 0;
     else
     {
-        i_pos = var_GetInteger( p_input, "time" );
+        i_pos = US_FROM_VLC_TICK(var_GetInteger( p_input, "time" ));
         vlc_object_release( p_input );
     }
 
@@ -99,7 +99,7 @@ DBUS_METHOD( SetPosition )
 
     if( input != NULL )
     {
-        var_SetInteger( input, "time", i_pos );
+        var_SetInteger( input, "time", VLC_TICK_FROM_US(i_pos) );
         vlc_object_release( input );
     }
 
@@ -129,8 +129,8 @@ DBUS_METHOD( Seek )
     input_thread_t *p_input = pl_CurrentInput( p_this );
     if( p_input && var_GetBool( p_input, "can-seek" ) )
     {
-        mtime_t i_pos = var_GetInteger( p_input, "time" ) + i_step;
-        var_SetInteger( p_input, "time", (i_pos >= 0) ? i_pos : 0 );
+        vlc_tick_t i_pos = var_GetInteger( p_input, "time" ) + i_step;
+        var_SetInteger( p_input, "time", (i_pos >= 0) ? VLC_TICK_FROM_US(i_pos) : 0 );
     }
 
     if( p_input )
@@ -268,7 +268,7 @@ MarshalCanPlay( intf_thread_t *p_intf, DBusMessageIter *container )
     playlist_t *p_playlist = p_intf->p_sys->p_playlist;
 
     PL_LOCK;
-    dbus_bool_t b_can_play = playlist_CurrentSize( p_playlist ) > 0;
+    dbus_bool_t b_can_play = !playlist_IsEmpty( p_playlist );
     PL_UNLOCK;
 
     if( !dbus_message_iter_append_basic( container, DBUS_TYPE_BOOLEAN,
@@ -547,7 +547,7 @@ DBUS_SIGNAL( SeekedSignal )
 
     if( p_input )
     {
-        i_pos = var_GetInteger( p_input, "time" );
+        i_pos = US_FROM_VLC_TICK(var_GetInteger( p_input, "time" ));
         vlc_object_release( p_input );
     }
 

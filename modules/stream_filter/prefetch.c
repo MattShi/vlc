@@ -35,7 +35,21 @@
 #include <vlc_fs.h>
 #include <vlc_interrupt.h>
 
-struct stream_sys_t
+struct stream_ctrl
+{
+    struct stream_ctrl *next;
+    int query;
+    union
+    {
+        struct
+        {
+            int id;
+            bool state;
+        } id_state;
+    };
+};
+
+typedef struct
 {
     vlc_mutex_t  lock;
     vlc_cond_t   wait_data;
@@ -51,7 +65,7 @@ struct stream_sys_t
     bool         can_pace;
     bool         can_pause;
     uint64_t     size;
-    int64_t      pts_delay;
+    vlc_tick_t   pts_delay;
     char        *content_type;
 
     uint64_t     buffer_offset;
@@ -59,9 +73,10 @@ struct stream_sys_t
     size_t       buffer_length;
     size_t       buffer_size;
     char        *buffer;
-    size_t       read_size;
     size_t       seek_threshold;
-};
+
+    struct stream_ctrl *controls;
+} stream_sys_t;
 
 static ssize_t ThreadRead(stream_t *stream, void *buf, size_t length)
 {
@@ -114,9 +129,6 @@ static int ThreadControl(stream_t *stream, int query, ...)
     return ret;
 }
 
-#define MAX_READ 65536
-#define SEEK_THRESHOLD MAX_READ
-
 static void *Thread(void *data)
 {
     stream_t *stream = data;
@@ -129,6 +141,17 @@ static void *Thread(void *data)
     mutex_cleanup_push(&sys->lock);
     for (;;)
     {
+        struct stream_ctrl *ctrl = sys->controls;
+
+        if (unlikely(ctrl != NULL))
+        {
+            sys->controls = ctrl->next;
+            ThreadControl(stream, ctrl->query, ctrl->id_state.id,
+                          ctrl->id_state.state);
+            free(ctrl);
+            continue;
+        }
+
         if (sys->paused != paused)
         {   /* Update pause state */
             msg_Dbg(stream, paused ? "resuming" : "pausing");
@@ -215,20 +238,10 @@ static void *Thread(void *data)
 
             /* Discard some historical data to make room. */
             len = history;
-            if (len > sys->read_size)
-                len = sys->read_size;
 
             assert(len <= sys->buffer_length);
             sys->buffer_offset += len;
             sys->buffer_length -= len;
-        }
-        else
-        {   /* Some streams cannot return a short data count and just wait for
-             * all requested data to become available (e.g. regular files). So
-             * we have to limit the data read in a single operation to avoid
-             * blocking for too long. */
-            if (len > sys->read_size)
-                len = sys->read_size;
         }
 
         size_t offset = (sys->buffer_offset + sys->buffer_length)
@@ -333,12 +346,6 @@ static ssize_t Read(stream_t *stream, void *buf, size_t buflen)
     return copy;
 }
 
-static int ReadDir(stream_t *stream, input_item_node_t *node)
-{
-    (void) stream; (void) node;
-    return VLC_EGENERIC;
-}
-
 static int Control(stream_t *stream, int query, va_list args)
 {
     stream_sys_t *sys = stream->p_sys;
@@ -357,15 +364,13 @@ static int Control(stream_t *stream, int query, va_list args)
         case STREAM_CAN_CONTROL_PACE:
             *va_arg (args, bool *) = sys->can_pace;
             break;
-        case STREAM_IS_DIRECTORY:
-            return VLC_EGENERIC;
         case STREAM_GET_SIZE:
             if (sys->size == (uint64_t)-1)
                 return VLC_EGENERIC;
             *va_arg(args, uint64_t *) = sys->size;
             break;
         case STREAM_GET_PTS_DELAY:
-            *va_arg(args, int64_t *) = sys->pts_delay;
+            *va_arg(args, vlc_tick_t *) = sys->pts_delay;
             break;
         case STREAM_GET_TITLE_INFO:
         case STREAM_GET_TITLE:
@@ -378,6 +383,7 @@ static int Control(stream_t *stream, int query, va_list args)
             *va_arg(args, char **) = strdup(sys->content_type);
             return VLC_SUCCESS;
         case STREAM_GET_SIGNAL:
+        case STREAM_GET_TAGS:
             return VLC_EGENERIC;
         case STREAM_SET_PAUSE_STATE:
         {
@@ -391,7 +397,24 @@ static int Control(stream_t *stream, int query, va_list args)
         }
         case STREAM_SET_TITLE:
         case STREAM_SET_SEEKPOINT:
+            return VLC_EGENERIC;
         case STREAM_SET_PRIVATE_ID_STATE:
+        {
+            struct stream_ctrl *ctrl = malloc(sizeof (*ctrl)), **pp;
+            if (unlikely(ctrl == NULL))
+                return VLC_ENOMEM;
+
+            ctrl->next = NULL;
+            ctrl->query = query;
+            ctrl->id_state.id = va_arg(args, int);
+            ctrl->id_state.state = va_arg(args, int);
+            vlc_mutex_lock(&sys->lock);
+            for (pp = &sys->controls; *pp != NULL; pp = &((*pp)->next));
+            *pp = ctrl;
+            vlc_cond_signal(&sys->wait_space);
+            vlc_mutex_unlock(&sys->lock);
+            break;
+        }
         case STREAM_SET_PRIVATE_ID_CA:
         case STREAM_GET_PRIVATE_ID_STATE:
             return VLC_EGENERIC;
@@ -448,19 +471,15 @@ static int Open(vlc_object_t *obj)
     sys->stream_offset = 0;
     sys->buffer_length = 0;
     sys->buffer_size = var_InheritInteger(obj, "prefetch-buffer-size") << 10u;
-    sys->read_size = var_InheritInteger(obj, "prefetch-read-size");
     sys->seek_threshold = var_InheritInteger(obj, "prefetch-seek-threshold");
+    sys->controls = NULL;
 
     uint64_t size = stream_Size(stream->s);
     if (size > 0)
     {   /* No point allocating a buffer larger than the source stream */
         if (sys->buffer_size > size)
             sys->buffer_size = size;
-        if (sys->read_size > size)
-            sys->read_size = size;
     }
-    if (sys->buffer_size < sys->read_size)
-        sys->buffer_size = sys->read_size;
 
     sys->buffer = malloc(sys->buffer_size);
     if (sys->buffer == NULL)
@@ -485,10 +504,8 @@ static int Open(vlc_object_t *obj)
         goto error;
     }
 
-    msg_Dbg(stream, "using %zu bytes buffer, %zu bytes read",
-            sys->buffer_size, sys->read_size);
+    msg_Dbg(stream, "using %zu bytes buffer", sys->buffer_size);
     stream->pf_read = Read;
-    stream->pf_readdir = ReadDir;
     stream->pf_control = Control;
     return VLC_SUCCESS;
 
@@ -516,6 +533,12 @@ static void Close (vlc_object_t *obj)
     vlc_cond_destroy(&sys->wait_data);
     vlc_mutex_destroy(&sys->lock);
 
+    while(sys->controls)
+    {
+        struct stream_ctrl *ctrl = sys->controls;
+        sys->controls = ctrl->next;
+        free(ctrl);
+    }
     free(sys->buffer);
     free(sys->content_type);
     free(sys);
@@ -532,9 +555,7 @@ vlc_module_begin()
     add_integer("prefetch-buffer-size", 1 << 14, N_("Buffer size"),
                 N_("Prefetch buffer size (KiB)"), false)
         change_integer_range(4, 1 << 20)
-    add_integer("prefetch-read-size", 1 << 14, N_("Read size"),
-                N_("Prefetch background read size (bytes)"), true)
-        change_integer_range(1, 1 << 29)
+    add_obsolete_integer("prefetch-read-size") /* since 4.0.0 */
     add_integer("prefetch-seek-threshold", 1 << 14, N_("Seek threshold"),
                 N_("Prefetch forward seek threshold (bytes)"), true)
         change_integer_range(0, UINT64_C(1) << 60)

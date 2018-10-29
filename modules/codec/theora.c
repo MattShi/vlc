@@ -47,7 +47,7 @@
 /*****************************************************************************
  * decoder_sys_t : theora decoder descriptor
  *****************************************************************************/
-struct decoder_sys_t
+typedef struct
 {
     /* Module mode */
     bool b_packetizer;
@@ -72,8 +72,8 @@ struct decoder_sys_t
     /*
      * Common properties
      */
-    mtime_t i_pts;
-};
+    vlc_tick_t i_pts;
+} decoder_sys_t;
 
 /*****************************************************************************
  * Local prototypes
@@ -143,10 +143,7 @@ static const char *const ppsz_enc_options[] = {
     "quality", NULL
 };
 
-/*****************************************************************************
- * OpenDecoder: probe the decoder and return score
- *****************************************************************************/
-static int OpenDecoder( vlc_object_t *p_this )
+static int OpenCommon( vlc_object_t *p_this, bool b_packetizer )
 {
     decoder_t *p_dec = (decoder_t*)p_this;
     decoder_sys_t *p_sys;
@@ -159,19 +156,23 @@ static int OpenDecoder( vlc_object_t *p_this )
     /* Allocate the memory needed to store the decoder's structure */
     if( ( p_dec->p_sys = p_sys = malloc(sizeof(*p_sys)) ) == NULL )
         return VLC_ENOMEM;
-    p_dec->p_sys->b_packetizer = false;
+    p_sys->b_packetizer = b_packetizer;
     p_sys->b_has_headers = false;
-    p_sys->i_pts = VLC_TS_INVALID;
+    p_sys->i_pts = VLC_TICK_INVALID;
     p_sys->b_decoded_first_keyframe = false;
     p_sys->tcx = NULL;
 
-    /* Set output properties */
-    p_dec->fmt_out.i_codec = VLC_CODEC_I420;
-
-    /* Set callbacks */
-    p_dec->pf_decode    = DecodeVideo;
-    p_dec->pf_packetize = Packetize;
-    p_dec->pf_flush     = Flush;
+    if( b_packetizer )
+    {
+        p_dec->fmt_out.i_codec = VLC_CODEC_THEORA;
+        p_dec->pf_packetize = Packetize;
+    }
+    else
+    {
+        p_dec->fmt_out.i_codec = VLC_CODEC_I420;
+        p_dec->pf_decode = DecodeVideo;
+    }
+    p_dec->pf_flush = Flush;
 
     /* Init supporting Theora structures needed in header parsing */
     th_comment_init( &p_sys->tc );
@@ -180,19 +181,17 @@ static int OpenDecoder( vlc_object_t *p_this )
     return VLC_SUCCESS;
 }
 
+/*****************************************************************************
+ * OpenDecoder: probe the decoder and return score
+ *****************************************************************************/
+static int OpenDecoder( vlc_object_t *p_this )
+{
+    return OpenCommon( p_this, false );
+}
+
 static int OpenPacketizer( vlc_object_t *p_this )
 {
-    decoder_t *p_dec = (decoder_t*)p_this;
-
-    int i_ret = OpenDecoder( p_this );
-
-    if( i_ret == VLC_SUCCESS )
-    {
-        p_dec->p_sys->b_packetizer = true;
-        p_dec->fmt_out.i_codec = VLC_CODEC_THEORA;
-    }
-
-    return i_ret;
+    return OpenCommon( p_this, true );
 }
 
 /****************************************************************************
@@ -308,11 +307,8 @@ static int ProcessHeaders( decoder_t *p_dec )
         p_dec->fmt_out.video.i_visible_width = p_sys->ti.pic_width;
         p_dec->fmt_out.video.i_visible_height = p_sys->ti.pic_height;
 
-        if( p_sys->ti.pic_x || p_sys->ti.pic_y )
-        {
-            p_dec->fmt_out.video.i_x_offset = p_sys->ti.pic_x;
-            p_dec->fmt_out.video.i_y_offset = p_sys->ti.pic_y;
-        }
+        p_dec->fmt_out.video.i_x_offset = p_sys->ti.pic_x;
+        p_dec->fmt_out.video.i_y_offset = p_sys->ti.pic_y;
     }
 
     if( p_sys->ti.aspect_denominator && p_sys->ti.aspect_numerator )
@@ -444,7 +440,7 @@ static void Flush( decoder_t *p_dec )
 {
     decoder_sys_t *p_sys = p_dec->p_sys;
 
-    p_sys->i_pts = VLC_TS_INVALID;
+    p_sys->i_pts = VLC_TICK_INVALID;
 }
 
 /*****************************************************************************
@@ -470,7 +466,7 @@ static void *ProcessPacket( decoder_t *p_dec, ogg_packet *p_oggpacket,
     }
 
     /* Date management */
-    if( p_block->i_pts > VLC_TS_INVALID && p_block->i_pts != p_sys->i_pts )
+    if( p_block->i_pts != VLC_TICK_INVALID && p_block->i_pts != p_sys->i_pts )
     {
         p_sys->i_pts = p_block->i_pts;
     }
@@ -491,7 +487,7 @@ static void *ProcessPacket( decoder_t *p_dec, ogg_packet *p_oggpacket,
     }
 
     /* Date management */
-    p_sys->i_pts += ( CLOCK_FREQ * p_sys->ti.fps_denominator /
+    p_sys->i_pts += vlc_tick_from_samples( p_sys->ti.fps_denominator,
                       p_sys->ti.fps_numerator ); /* 1 frame per packet */
 
     return p_buf;
@@ -550,6 +546,9 @@ static void ParseTheoraComments( decoder_t *p_dec )
 {
     char *psz_name, *psz_value, *psz_comment;
     int i = 0;
+
+    decoder_sys_t *p_sys = p_dec->p_sys;
+
     /* Regarding the th_comment structure: */
 
     /* The metadata is stored as a series of (tag, value) pairs, in
@@ -565,14 +564,14 @@ static void ParseTheoraComments( decoder_t *p_dec )
        the bitstream format itself treats them as 8-bit clean vectors,
        possibly containing null characters, and so the length array
        should be treated as their authoritative length. */
-    while ( i < p_dec->p_sys->tc.comments )
+    while ( i < p_sys->tc.comments )
     {
-        int clen = p_dec->p_sys->tc.comment_lengths[i];
+        int clen = p_sys->tc.comment_lengths[i];
         if ( clen <= 0 || clen >= INT_MAX ) { i++; continue; }
         psz_comment = (char *)malloc( clen + 1 );
         if( !psz_comment )
             break;
-        memcpy( (void*)psz_comment, (void*)p_dec->p_sys->tc.user_comments[i], clen + 1 );
+        memcpy( (void*)psz_comment, (void*)p_sys->tc.user_comments[i], clen + 1 );
         psz_name = psz_comment;
         psz_value = strchr( psz_comment, '=' );
         if( psz_value )
@@ -613,8 +612,7 @@ static void CloseDecoder( vlc_object_t *p_this )
 static void theora_CopyPicture( picture_t *p_pic,
                                 th_ycbcr_buffer ycbcr )
 {
-    int i_plane, i_planes, i_line, i_dst_stride, i_src_stride;
-    uint8_t *p_dst, *p_src;
+    int i_plane, i_planes;
     /* th_img_plane
        int  width   The width of this plane.
        int  height  The height of this plane.
@@ -636,21 +634,16 @@ static void theora_CopyPicture( picture_t *p_pic,
        typedef th_img_plane th_ycbcr_buffer[3]
     */
 
-    i_planes = p_pic->i_planes < 3 ? p_pic->i_planes : 3;
+    i_planes = __MIN(p_pic->i_planes, 3);
     for( i_plane = 0; i_plane < i_planes; i_plane++ )
     {
-        p_dst = p_pic->p[i_plane].p_pixels;
-        p_src = ycbcr[i_plane].data;
-        i_dst_stride  = p_pic->p[i_plane].i_pitch;
-        i_src_stride  = ycbcr[i_plane].stride;
-        for( i_line = 0;
-             i_line < __MIN(p_pic->p[i_plane].i_lines, ycbcr[i_plane].height);
-             i_line++ )
-        {
-            memcpy( p_dst, p_src, ycbcr[i_plane].width );
-            p_src += i_src_stride;
-            p_dst += i_dst_stride;
-        }
+        plane_t src;
+        src.i_lines = ycbcr[i_plane].height;
+        src.p_pixels = ycbcr[i_plane].data;
+        src.i_pitch = ycbcr[i_plane].stride;
+        src.i_visible_pitch = src.i_pitch;
+        src.i_visible_lines = src.i_lines;
+        plane_CopyPixels( &p_pic->p[i_plane], &src );
     }
 }
 
@@ -658,7 +651,7 @@ static void theora_CopyPicture( picture_t *p_pic,
 /*****************************************************************************
  * encoder_sys_t : theora encoder descriptor
  *****************************************************************************/
-struct encoder_sys_t
+typedef struct
 {
     /*
      * Input properties
@@ -671,7 +664,7 @@ struct encoder_sys_t
     th_info      ti;                     /* theora bitstream settings */
     th_comment   tc;                     /* theora comment header */
     th_enc_ctx   *tcx;                   /* theora context */
-};
+} encoder_sys_t;
 
 /*****************************************************************************
  * OpenEncoder: probe the encoder and return score

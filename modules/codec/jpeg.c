@@ -66,12 +66,12 @@ typedef struct jpeg_sys_t jpeg_sys_t;
 /*
  * jpeg decoder descriptor
  */
-struct decoder_sys_t
+typedef struct
 {
     JPEG_SYS_COMMON_MEMBERS
 
     struct jpeg_decompress_struct p_jpeg;
-};
+} decoder_sys_t;
 
 static int  OpenDecoder(vlc_object_t *);
 static void CloseDecoder(vlc_object_t *);
@@ -81,7 +81,7 @@ static int DecodeBlock(decoder_t *, block_t *);
 /*
  * jpeg encoder descriptor
  */
-struct encoder_sys_t
+typedef struct
 {
     JPEG_SYS_COMMON_MEMBERS
 
@@ -89,7 +89,7 @@ struct encoder_sys_t
 
     int i_blocksize;
     int i_quality;
-};
+} encoder_sys_t;
 
 static const char * const ppsz_enc_options[] = {
     "quality",
@@ -178,6 +178,8 @@ static int OpenDecoder(vlc_object_t *p_this)
     p_dec->pf_decode = DecodeBlock;
 
     p_dec->fmt_out.i_codec = VLC_CODEC_RGB24;
+    p_dec->fmt_out.video.transfer = TRANSFER_FUNC_SRGB;
+    p_dec->fmt_out.video.b_color_range_full = true;
 
     return VLC_SUCCESS;
 }
@@ -216,13 +218,13 @@ de_get16( void * ptr, uint endian ) {
     if ( endian == G_BIG_ENDIAN )
     {
         #ifndef WORDS_BIGENDIAN
-        val = bswap16( val );
+        val = vlc_bswap16( val );
         #endif
     }
     else
     {
         #ifdef WORDS_BIGENDIAN
-        val = bswap16( val );
+        val = vlc_bswap16( val );
         #endif
     }
     return val;
@@ -236,13 +238,13 @@ de_get32( void * ptr, uint endian ) {
     if ( endian == G_BIG_ENDIAN )
     {
         #ifndef WORDS_BIGENDIAN
-        val = bswap32( val );
+        val = vlc_bswap32( val );
         #endif
     }
     else
     {
         #ifdef WORDS_BIGENDIAN
-        val = bswap32( val );
+        val = vlc_bswap32( val );
         #endif
     }
     return val;
@@ -569,7 +571,7 @@ static int DecodeBlock(decoder_t *p_dec, block_t *p_block)
     jpeg_destroy_decompress(&p_sys->p_jpeg);
     free(p_row_pointers);
 
-    p_pic->date = p_block->i_pts > VLC_TS_INVALID ? p_block->i_pts : p_block->i_dts;
+    p_pic->date = p_block->i_pts != VLC_TICK_INVALID ? p_block->i_pts : p_block->i_dts;
 
     block_Release(p_block);
     decoder_QueueVideo( p_dec, p_pic );

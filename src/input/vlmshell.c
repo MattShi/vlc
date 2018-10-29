@@ -425,9 +425,9 @@ static int ExecuteControl( vlm_t *p_vlm, const char *psz_name, const int i_arg, 
                 int64_t i_new_time;
 
                 if( strstr( psz_argument, "ms" ) )
-                    i_new_time =  1000 * (int64_t)atoi( psz_argument );
+                    i_new_time = INT64_C(1000) * atoi( psz_argument );
                 else
-                    i_new_time = 1000000 * (int64_t)atoi( psz_argument );
+                    i_new_time = INT64_C(1000000) * atoi( psz_argument );
 
                 if( b_relative )
                 {
@@ -1535,6 +1535,7 @@ static vlm_message_t *vlm_Show( vlm_t *vlm, vlm_media_sys_t *media,
 
         /* We must destroy the parent node "show" of show2
          * and not the children */
+        free( show2->child );
         free( show2->psz_name );
         free( show2 );
 

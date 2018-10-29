@@ -140,7 +140,7 @@ static int Open(vlc_object_t *p_obj)
 {
     demux_t *p_demux = (demux_t*) p_obj;
 
-    if(!p_demux->s->psz_url)
+    if(!p_demux->s->psz_url || p_demux->s->b_preparsing)
         return VLC_EGENERIC;
 
     std::string mimeType;
@@ -239,7 +239,7 @@ static int Open(vlc_object_t *p_obj)
         return VLC_EGENERIC;
     }
 
-    p_demux->p_sys         = reinterpret_cast<demux_sys_t *>(p_manager);
+    p_demux->p_sys         = p_manager;
     p_demux->pf_demux      = p_manager->demux_callback;
     p_demux->pf_control    = p_manager->control_callback;
 
